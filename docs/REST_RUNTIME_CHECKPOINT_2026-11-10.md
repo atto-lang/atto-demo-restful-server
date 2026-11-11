@@ -41,6 +41,9 @@ Oracle Native Image `25.0.4` fails with the pinned Truffle `25.3.4.1`:
 `ClassNotFoundException: com.oracle.truffle.api.impl.TruffleLocator`.
 The builder now rejects a mismatched SDK before starting compilation.
 
+The produced Mach-O executable and carrier both declare a minimum deployment
+target of **macOS 26.0** (SDK 26.5). Linked system libraries are CoreServices,
+Foundation, CFNetwork, CoreFoundation, libSystem, libz and libobjc.
 The extracted deployment needs the matching OS/architecture system libraries
 and bundled `liboresthread.dylib`. It requires no JVM, Python, Maven, Git, compiler
 checkout or telemetry collector. AOT means a native runtime interpreting guest
