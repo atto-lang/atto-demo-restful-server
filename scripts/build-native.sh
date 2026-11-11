@@ -13,6 +13,12 @@ source_dir="$(cd "$source_dir" && pwd -P)"
 application_status="$(git -C "$root" status --porcelain --untracked-files=all)" || { echo 'Cannot inspect application checkout.' >&2; exit 65; }
 [[ -z "$application_status" ]] || { echo 'Application checkout must be clean so artifact provenance is exact.' >&2; exit 65; }
 [[ -x "$JAVA_HOME/bin/native-image" ]] || { echo 'GraalVM native-image is required on the build machine.' >&2; exit 69; }
+sdk_version="$(sed -n 's:.*<graalvm.version>\(.*\)</graalvm.version>.*:\1:p' "$source_dir/pom.xml")"
+image_version="$("$JAVA_HOME/bin/native-image" --version)"
+[[ -n "$sdk_version" && "$image_version" == *"$sdk_version"* ]] || {
+  echo "Native Image must match compiler Truffle SDK $sdk_version; selected: $image_version" >&2
+  exit 65
+}
 mvn -q -f "$source_dir/pom.xml" -DskipTests clean package dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
 build="$root/.cache/native-$mode"
 classes="$build/classes"
@@ -85,6 +91,8 @@ metadata = dict(mode=sys.argv[4], compiler_commit=subprocess.check_output(['git'
                 compiler_tree=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD^{tree}'],text=True).strip(),
                 application_commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip(),
                 graalvm=subprocess.check_output([__import__('os').environ['JAVA_HOME']+'/bin/native-image','--version'],text=True).strip())
+metadata['dependencies'] = subprocess.check_output(['git','-C',str(root),'submodule','status','--recursive'],text=True).splitlines()
+metadata['compiler_jar_sha256'] = hashlib.sha256((source/'target/oreslang-source-0.1.0-SNAPSHOT.jar').read_bytes()).hexdigest()
 metadata['sha256'] = {str(p.relative_to(dist)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(dist.rglob('*')) if p.is_file() and p.name != 'manifest.json'}
 (dist/'manifest.json').write_text(json.dumps(metadata, indent=2)+'\n')
 PY

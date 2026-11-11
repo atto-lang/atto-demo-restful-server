@@ -1,4 +1,11 @@
-# Oreslang demo RESTful server
+# AttoLang demo RESTful server
+
+This imports the executable legacy Oreslang implementation into
+`atto-lang/atto-demo-restful-server`, preserving both Git histories. The destination
+scope document is retained in [docs/DESTINATION_SCOPE.md](docs/DESTINATION_SCOPE.md).
+Existing `.ores`, `ORES_*` variables, Java package names and wire telemetry schemas
+remain compatibility interfaces. See [the migration checkpoint](docs/REST_RUNTIME_CHECKPOINT_2026-11-10.md)
+for exact pins, executed evidence and compiler blockers.
 
 A real HTTP/1.1 server on **127.0.0.1:3000**, built with Oreslang Spin and the native
 HTTP runtime. Every matched request gets a fresh actor. Read handlers use shared
@@ -111,9 +118,14 @@ state, not OS-process isolation. The JVM transport retains the socket/FD.
 
 ## Validation
 
-`./scripts/test.sh` runs the original 31 real-HTTP and route-generation checks plus an opt-in core/userland diagnostic integration check: the 10-request
+`./scripts/test.sh` runs 38 real-HTTP and route-generation checks plus the core/userland diagnostic integration check: the 10-request
 curl sequence, error responses, HEAD/OPTIONS, persistence across a server restart,
-path mapping, unsupported method files and symlink rejection. The pinned Spin
+path mapping, unsupported method files, symlink rejection, three capacity-503 responses
+while a real guest upload is suspended, deadline expiry, disconnect recovery, and
+SIGTERM during an admitted upload. Set `REST_TEST_LOG_DIR` to retain server logs.
+On this pin a busy body read expires at ten seconds with HTTP 500, not 504.
+The signal test verifies process/listener exit and unchanged storage; it does not
+prove graceful draining or serial HTTP actor lowering. The pinned Spin
 revision also passed its existing 55 HTTP assertions and routing golden suite.
 Validation used JDK 25 interpreter mode; native-image/optimizing-Graal performance
 was not measured for this demo.
@@ -279,8 +291,8 @@ these measurements.
 
 ## Core runtime performance diagnostics (experimental compiler pin)
 
-The compiler pin on this development branch targets the diagnostic implementation
-in [oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451).
+The compiler pin includes the diagnostic implementation originally developed in
+[oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451).
 This is **core runtime diagnostics**, not userland `oreslang-otel`.
 
 ```sh
@@ -304,11 +316,11 @@ To capture both low-level timings and guarded core events, use
 `./scripts/run-server.sh --core-perf --core-debug`. Core debug emits
 `ores-core-debug.v1` JSONL at shutdown; `ORES_CORE_DEBUG=true` also enables
 it and `--no-core-debug` overrides that environment setting.
-The pinned source revision is still a draft and must pass exact-commit
-integration testing before benchmarks should be treated as verified.
+The compiler is an immutable compatibility pin from merged history. The checkpoint
+records application validation; no current throughput benchmark is claimed.
 
 The automated diagnostic check uses the normal ten-request script, waits for
-the userland request spans, gracefully terminates the server and verifies that
+the userland request spans, sends SIGTERM to the server and verifies that
 both core JSONL schemas were exported at shutdown, including fixed-name HTTP
 phase timings and numeric debug events. It also checks that core records
 contain no request path, body or trace ID:
@@ -336,7 +348,7 @@ result and stop the server. Then restart terminal 1 with:
 ./scripts/run-server.sh --core-perf --core-debug 2>&1 | tee .cache/core-on.log
 ```
 
-Repeat the same benchmark workload and stop the server gracefully to export
+Repeat the same benchmark workload and stop the server to export
 the bounded core capture. To inspect the two independent timing namespaces:
 
 ```sh

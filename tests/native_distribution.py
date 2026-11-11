@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='ores native relocation ') as tmp:
     expected = json.loads((package / 'build-info.json').read_text())['build_mode']
     assert mode == expected
     forged = run('-Dores.native.build-mode=' + ('hybrid' if mode == 'aot' else 'aot'), '--build-info')
-    assert json.loads(forged.stdout)['build_mode'] == mode
+    assert forged.returncode != 0, 'launcher accepted unsupported -D flag'
     for bad in (['jit', 'hybrid'] if mode == 'aot' else ['jit']):
         rejected = run('--mode=' + bad)
         assert rejected.returncode != 0 and ('AOT-only' in rejected.stderr or 'Native hybrid' in rejected.stderr), rejected.stderr
@@ -63,10 +63,10 @@ with tempfile.TemporaryDirectory(prefix='ores native relocation ') as tmp:
         assert hashlib.sha256((package / name).read_bytes()).hexdigest() == checksum, name
     # Use the same full HTTP/restart suite; only the test driver has Python/curl.
     subprocess.run([sys.executable, str(ROOT / 'tests/integration.py')], check=True,
-                   env=dict(os.environ, REST_SERVER_BINARY=str(binary)), timeout=90)
+                   env=dict(os.environ, REST_SERVER_BINARY=str(binary)), cwd=root, timeout=180)
     if mode == 'hybrid':
         subprocess.run([sys.executable, str(ROOT / 'tests/integration.py')], check=True,
-                       env=dict(os.environ, REST_SERVER_BINARY=str(binary), REST_EXECUTION_MODE='aot'), timeout=90)
+                       env=dict(os.environ, REST_SERVER_BINARY=str(binary), REST_EXECUTION_MODE='aot'), cwd=root, timeout=180)
     libraries = list((package / 'lib').glob('liboresthread.*'))
     assert len(libraries) == 1
     missing = libraries[0].with_suffix('.missing')
