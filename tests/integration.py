@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import tempfile
 import time
@@ -69,6 +70,12 @@ class Server:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=3)
+        self.exit_status = self.process.returncode
+        self.log.flush()
+        if os.environ.get("REST_TEST_LOG_DIR"):
+            destination = Path(os.environ["REST_TEST_LOG_DIR"])
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.log.name, destination / f"server-{self.process.pid}-{self.port}.log")
         self.log.close()
     def __exit__(self, *_):
         self.stop()
