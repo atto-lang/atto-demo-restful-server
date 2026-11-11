@@ -232,6 +232,7 @@ class RouteWave14BoundaryTests(unittest.TestCase):
         generator.generate(3000, self.root/'data')
         generated = self.root/'src/generated'
         prior = {name: (generated/name).read_bytes() for name in ('routes.ores','config.ores')}
+        (self.root/'src/routes/rest/health/get.ores').unlink()
         (self.root/'src/routes/rest/health/GET.ores').write_text('bad method')
         with self.assertRaisesRegex(ValueError, 'unsupported method filename'):
             generator.generate(3001, self.root/'new-data')
@@ -346,6 +347,7 @@ class RouteCaseAndEmissionWave31(unittest.TestCase):
         self.addCleanup(active.stop)
 
     def test_uppercase_method_is_rejected_before_publication(self):
+        (self.routes / "v1/get.ores").unlink()
         (self.routes / "v1/GET.ores").write_text("fixture", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "unsupported method filename"):
             generator.generate(3000, self.root / "data")
@@ -664,6 +666,7 @@ class RouteWave46CaseSensitiveMethodPublication(unittest.TestCase):
         generated = self.root / 'src/generated'
         before = {name: (generated / name).read_bytes()
                   for name in ('routes.ores', 'config.ores')}
+        (self.root / 'src/routes/rest/health/get.ores').unlink()
         (self.root / 'src/routes/rest/health/GET.ores').write_text('invalid case')
         with self.assertRaisesRegex(ValueError, 'unsupported method filename'):
             generator.generate(3000, self.root / 'other-data')
@@ -945,7 +948,7 @@ class Wave1609InertRouteMetadata(unittest.TestCase):
         health = self.root / "src/routes/rest/health"
         (health / "README.md").write_text("not source", encoding="utf-8")
         (health / "route.json").write_text('{"fake":"POST /health"}', encoding="utf-8")
-        (health / "get.ORES").write_text("case-shifted non-source", encoding="utf-8")
+        (health / "metadata.ORES").write_text("case-shifted non-source", encoding="utf-8")
         generator.generate(3000, self.root / "same-data")
         self.assertEqual(
             {name: (generated / name).read_bytes() for name in previous}, previous)
@@ -953,7 +956,7 @@ class Wave1609InertRouteMetadata(unittest.TestCase):
         self.assertEqual(source.count('builder.route("GET"'), 1)
         self.assertNotIn("README.md", source)
         self.assertNotIn("route.json", source)
-        self.assertNotIn("get.ORES", source)
+        self.assertNotIn("metadata.ORES", source)
 
     def test_only_reviewed_lowercase_ores_extension_registers_new_handler(self):
         health = self.root / "src/routes/rest/health"
@@ -961,6 +964,7 @@ class Wave1609InertRouteMetadata(unittest.TestCase):
         generator.generate(3000, self.root / "same-data")
         first = (self.root / "src/generated/routes.ores").read_text()
         self.assertNotIn("HEAD /health", first)
+        (health / "head.ORES").unlink()
         (health / "head.ores").write_text("reviewed HEAD handler", encoding="utf-8")
         generator.generate(3000, self.root / "same-data")
         second = (self.root / "src/generated/routes.ores").read_text()

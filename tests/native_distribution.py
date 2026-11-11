@@ -51,7 +51,8 @@ with tempfile.TemporaryDirectory(prefix='ores native relocation ') as tmp:
     expected = json.loads((package / 'build-info.json').read_text())['build_mode']
     assert mode == expected
     forged = run('-Dores.native.build-mode=' + ('hybrid' if mode == 'aot' else 'aot'), '--build-info')
-    assert forged.returncode != 0, 'launcher accepted unsupported -D flag'
+    # Native Image consumes -D before main; build-time capability must stay fixed.
+    assert forged.returncode == 0 and json.loads(forged.stdout)['build_mode'] == mode
     for bad in (['jit', 'hybrid'] if mode == 'aot' else ['jit']):
         rejected = run('--mode=' + bad)
         assert rejected.returncode != 0 and ('AOT-only' in rejected.stderr or 'Native hybrid' in rejected.stderr), rejected.stderr

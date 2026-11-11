@@ -14,7 +14,7 @@ HTTP exchange.
 
 ## Run
 
-Prerequisites: **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
+Prerequisites: **Bash 5** (for source-policy checks), **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
 Oreslang dependencies. Set `JAVA_HOME` to your JDK 25 installation. The startup
 script uses its Java binary, or `ORES_JAVA` if explicitly set.
 
