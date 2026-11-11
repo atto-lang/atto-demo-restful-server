@@ -118,6 +118,22 @@ def transport_checks(directory):
     resource = directory / 'data/baz.txt'
     saved = resource.read_bytes()
     with Server(directory) as server:
+        # Malformed headers must be rejected before any guest exchange is admitted.
+        for headers in (
+            b'Host: localhost\r\nHost: other.test\r\n',
+            b'Host: localhost\r\nhOsT: other.test\r\n',
+            b'Host: \r\n', b'', b'Host: localhost, other.test\r\n',
+            b'Host: localhost\r\nX-Large: ' + b'x' * 12000 + b'\r\n',
+        ):
+            with socket.create_connection(('127.0.0.1', server.port), timeout=3) as peer:
+                peer.sendall(b'GET /health HTTP/1.1\r\n' + headers + b'Connection: close\r\n\r\n')
+                response = http.client.HTTPResponse(peer)
+                response.begin()
+                response.read()
+                assert response.status == 400, response.status
+                assert response.getheader('X-Ores-Trace-Id') is None
+                checks += 1
+        print('PASS: 6 malformed header requests rejected before guest admission')
         # Hold the only admission while three independent connections arrive.
         started = time.monotonic()
         with held_upload(server) as peer:

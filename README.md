@@ -118,15 +118,16 @@ state, not OS-process isolation. The JVM transport retains the socket/FD.
 
 ## Validation
 
-`./scripts/test.sh` runs 38 real-HTTP and route-generation checks plus the core/userland diagnostic integration check: the 10-request
+`./scripts/test.sh` runs 44 real-HTTP and route-generation checks plus the core/userland diagnostic integration check: the 10-request
 curl sequence, error responses, HEAD/OPTIONS, persistence across a server restart,
 path mapping, unsupported method files, symlink rejection, three capacity-503 responses
 while a real guest upload is suspended, deadline expiry, disconnect recovery, and
 SIGTERM during an admitted upload. Set `REST_TEST_LOG_DIR` to retain server logs.
 On this pin a busy body read expires at ten seconds with HTTP 500, not 504.
 The signal test verifies process/listener exit and unchanged storage; it does not
-prove graceful draining or serial HTTP actor lowering. The pinned Spin
-revision also passed its existing 55 HTTP assertions and routing golden suite.
+prove graceful draining or serial HTTP actor lowering. Spin routing golden output and 110 real-HTTP assertions passed with the
+compatibility backport; its original compiler pin failed duplicate-Host rejection.
+The REST suite also checks six malformed-header rejections before guest admission.
 Validation used JDK 25 interpreter mode; native-image/optimizing-Graal performance
 was not measured for this demo.
 
