@@ -6,17 +6,14 @@ ores_verify_submodule_contract "$root"
 mode="${1:-aot}"
 case "$mode" in aot|hybrid) ;; *) echo 'Usage: scripts/build-native.sh [aot|hybrid]' >&2; exit 64;; esac
 : "${JAVA_HOME:?Set JAVA_HOME to GraalVM with native-image (matching the pinned SDK)}"
-: "${ORESLANG_SOURCE_DIR:?Set ORESLANG_SOURCE_DIR to the compiler checkout}"
-source_dir="$(cd "$ORESLANG_SOURCE_DIR" && pwd -P)"
-[[ -z "$(git -C "$root" status --porcelain)" ]] || { echo 'Application checkout must be clean so artifact provenance is exact.' >&2; exit 65; }
-[[ -x "$JAVA_HOME/bin/native-image" ]] || { echo 'GraalVM native-image is required on the build machine.' >&2; exit 69; }
 expected="$(ores_read_exact_source_ref "$root")"
-[[ "$(git -C "$source_dir" rev-parse HEAD)" == "$expected" ]] || { echo 'Compiler does not match SOURCE_REF.' >&2; exit 65; }
-[[ -z "$(git -C "$source_dir" status --porcelain)" ]] || { echo 'Compiler must be clean.' >&2; exit 65; }
-if git -C "$root" submodule status --recursive | grep -Eq '^[+-U]'; then
-  echo 'Initialize the exact dependency pins with scripts/setup.sh.' >&2; exit 65
-fi
-mvn -q -f "$source_dir/pom.xml" -DskipTests package dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+source_dir="${ORESLANG_SOURCE_DIR:-$root/.cache/compiler-$expected}"
+bash "$root/scripts/check-deps.sh" --all
+source_dir="$(cd "$source_dir" && pwd -P)"
+application_status="$(git -C "$root" status --porcelain --untracked-files=all)" || { echo 'Cannot inspect application checkout.' >&2; exit 65; }
+[[ -z "$application_status" ]] || { echo 'Application checkout must be clean so artifact provenance is exact.' >&2; exit 65; }
+[[ -x "$JAVA_HOME/bin/native-image" ]] || { echo 'GraalVM native-image is required on the build machine.' >&2; exit 69; }
+mvn -q -f "$source_dir/pom.xml" -DskipTests clean package dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
 build="$root/.cache/native-$mode"
 classes="$build/classes"
 mkdir -p "$classes"
@@ -28,10 +25,11 @@ from pathlib import Path
 import sys, zipfile
 root, output = Path(sys.argv[1]), Path(sys.argv[2])
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+    archive.write(root / '.ores.pkg.toml', '.ores.pkg.toml')
     for directory in ['src', 'dependencies/otel/src', 'dependencies/spin/src', 'dependencies/spin/dependencies/http-routing/src']:
         for path in sorted((root / directory).rglob('*.ores')):
-            if path.is_symlink():
-                raise SystemExit(f'Refusing symlinked source: {path}')
+            if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+                raise SystemExit(f'Refusing symlinked or escaping source: {path}')
             name = path.relative_to(root).as_posix()
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -49,7 +47,7 @@ dist="$root/dist/rest-server-$mode-$platform"
 # so repeated builds cannot retain stale libraries or read-only license trees.
 rm -rf -- "$dist"
 mkdir -p "$dist/bin" "$dist/lib"
-options=(-O2 --no-fallback -H:+ReportExceptionStackTraces -Dgraalvm.locatorDisabled=true
+options=(--initialize-at-build-time=dev.oreslang.runtime.NativeBuildMode -O2 --no-fallback -H:+ReportExceptionStackTraces -Dgraalvm.locatorDisabled=true
   "-Dores.native.build-mode=$mode" '-H:IncludeResources=ores-app\.zip')
 if [[ "$mode" == aot ]]; then options+=(-Dtruffle.UseFallbackRuntime=true); fi
 "$JAVA_HOME/bin/native-image" "${options[@]}" -cp "$classes:$classpath" \
@@ -83,6 +81,8 @@ python3 - "$root" "$source_dir" "$dist" "$mode" <<'PY'
 import hashlib, json, pathlib, subprocess, sys
 root, source, dist = map(pathlib.Path, sys.argv[1:4])
 metadata = dict(mode=sys.argv[4], compiler_commit=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip(),
+                application_tree=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD^{tree}'],text=True).strip(),
+                compiler_tree=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD^{tree}'],text=True).strip(),
                 application_commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip(),
                 graalvm=subprocess.check_output([__import__('os').environ['JAVA_HOME']+'/bin/native-image','--version'],text=True).strip())
 metadata['sha256'] = {str(p.relative_to(dist)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(dist.rglob('*')) if p.is_file() and p.name != 'manifest.json'}

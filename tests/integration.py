@@ -19,7 +19,7 @@ def request(port, method, path, body=None, headers=None):
         try:
             connection.request(method, path, body=body, headers=headers or {})
             response = connection.getresponse()
-            result = response.status, response.read(), dict(response.getheaders())
+            result = response.status, response.read(), response.headers
         finally:
             connection.close()
         if result[0] != 503:
