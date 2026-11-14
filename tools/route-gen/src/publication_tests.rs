@@ -1,7 +1,7 @@
 //! Adversarial Rust publication tests migrated from the Python generator oracle.
 //! These tests are host-only and do not assert guest compiler/runtime parity.
 use super::*;
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{env, fs, path::PathBuf};
 
 struct Sandbox(PathBuf);
 impl Sandbox {
