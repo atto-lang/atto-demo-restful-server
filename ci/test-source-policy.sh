@@ -56,6 +56,7 @@ printf 'removed legacy benchmark must stay denied\n' > "$test_repo/scripts/bench
 git -C "$test_repo" add .
 check_bad rest-legacy
 git -C "$test_repo" rm -q -f -- scripts/benchmark.py
+mkdir -p "$test_repo/scripts"
 printf 'new\n' > "$test_repo/scripts/new_tool.py"
 git -C "$test_repo" add .
 check_bad rest-legacy
