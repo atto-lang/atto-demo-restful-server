@@ -161,6 +161,8 @@ fn preflight_destination(path: &Path) -> Result<()> {
         Err(error) => Err(error.into()),
     }
 }
+// Portable fallback: the stdlib path-based variant is not concurrency-race-safe.
+#[cfg(not(target_os = "linux"))]
 fn generate(project: &Path, port: u16, data_dir: &Path) -> Result<usize> {
     if port == 0 { return Err("port must be in 1..65535".into()); }
     let routes = discover(project)?;
@@ -178,6 +180,14 @@ fn generate(project: &Path, port: u16, data_dir: &Path) -> Result<usize> {
     publish(&output.join("config.ores"), &config)?;
     Ok(routes.len())
 }
+#[cfg(target_os = "linux")]
+mod secure_io;
+
+#[cfg(target_os = "linux")]
+fn generate(project: &Path, port: u16, data_dir: &Path) -> Result<usize> {
+    secure_io::generate(project, port, data_dir)
+}
+
 fn cli() -> Result<(u16, PathBuf)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()
         .and_then(Path::parent).ok_or("cannot locate repository")?;
