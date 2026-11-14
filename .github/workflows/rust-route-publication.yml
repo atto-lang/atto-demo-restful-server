@@ -24,6 +24,7 @@ jobs:
           git diff --quiet
           git diff --cached --quiet
           bash -n scripts/generate-routes.sh
+          bash -n scripts/integration-rust.sh
           bash -n scripts/run-server.sh
           bash -n scripts/build-native.sh
           grep -Fq 'bash "$root/scripts/generate-routes.sh" --port "$port" --data-dir "$data_dir"' scripts/run-server.sh
@@ -35,6 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --offline --locked --manifest-path tools/route-gen/Cargo.toml
+      - name: Compile and execute Rust HTTP integration driver host tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --offline --locked --manifest-path tools/profile/Cargo.toml --bin integration
+          echo 'NOT_EXECUTED: real native HTTP integration requires an explicit REST_SERVER_BINARY and guest compiler'
       - name: Compare Rust routes and config against original Python oracle byte-for-byte
         shell: bash
         run: |
