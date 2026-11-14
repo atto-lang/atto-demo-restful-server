@@ -1,6 +1,5 @@
 //! Native-deployment HTTP integration driver, replacing the Python request driver in stages.
 //! Unit tests use a real loopback TCP server; production smoke requires an explicit server binary.
-use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     env, error::Error, fs,
@@ -27,12 +26,15 @@ fn parse_http(bytes: &[u8], head: bool) -> Result<Response> {
     let raw = std::str::from_utf8(&bytes[..offset])?;
     let mut lines = raw.split("\r\n");
     let status = lines.next().ok_or("HTTP status line missing")?;
-    let parts: Vec<_> = status.split_whitespace().collect();
-    if parts.len()!=3 || !parts[0].starts_with("HTTP/1.") || parts[1].len()!=3
-        || !parts[1].bytes().all(|b| b.is_ascii_digit()) {
+    let mut parts = status.splitn(3, ' ');
+    let proto = parts.next().ok_or("HTTP version missing")?;
+    let code = parts.next().ok_or("HTTP status missing")?;
+    let reason = parts.next().ok_or("HTTP reason missing")?;
+    if !["HTTP/1.0", "HTTP/1.1"].contains(&proto) || reason.is_empty() ||
+        code.len()!=3 || !code.bytes().all(|b| b.is_ascii_digit()) {
         return Err("invalid HTTP/1.x status line".into());
     }
-    let status: u16 = parts[1].parse()?;
+    let status: u16 = code.parse()?;
     let mut headers = HashMap::new();
     for line in lines {
         let (key, value) = line.split_once(':').ok_or("malformed HTTP response header")?;
@@ -79,7 +81,7 @@ fn decode_chunks(input: &[u8]) -> Result<Vec<u8>> {
 }
 fn request(port:u16, method:&str, path:&str, body:&[u8], media_type:Option<&str>) -> Result<Response> {
     if port==0 || method.is_empty() || !method.bytes().all(|b| b.is_ascii_uppercase())
-        || !path.starts_with('/') || path.contains(['\r','\n']) {
+        || !path.starts_with('/') || path.contains('\r') || path.contains('\n') {
         return Err("unsafe HTTP request inputs".into());
     }
     let mut stream = TcpStream::connect_timeout(
@@ -91,7 +93,7 @@ fn request(port:u16, method:&str, path:&str, body:&[u8], media_type:Option<&str>
         body.len()
     );
     if let Some(kind)=media_type {
-        if kind.contains(['\r','\n']) { return Err("invalid Content-Type".into()); }
+        if kind.contains('\r') || kind.contains('\n') { return Err("invalid Content-Type".into()); }
         header.push_str(&format!("Content-Type: {kind}\r\n"));
     }
     header.push_str("\r\n");
@@ -110,23 +112,21 @@ fn retry(port:u16, method:&str, path:&str, body:&[u8], ct:Option<&str>) -> Resul
     }
     Err("server admission did not recover after 50 attempts".into())
 }
-struct Running { process:Child, temporary:PathBuf }
+struct Running { process: Child }
 impl Drop for Running {
     fn drop(&mut self) {
         let _=self.process.kill();
         let _=self.process.wait();
-        let _=fs::remove_dir_all(&self.temporary);
     }
 }
-fn start(binary:&Path) -> Result<(Running,u16)> {
+struct Scratch(PathBuf);
+impl Drop for Scratch { fn drop(&mut self) { let _=fs::remove_dir_all(&self.0); } }
+fn start(binary:&Path, root:&Path) -> Result<(Running,u16)> {
     let file=fs::canonicalize(binary)?;
     if !file.is_file() { return Err("native server is not a regular file".into()); }
     let port=TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    let stamp=SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let dir=env::temp_dir().join(format!("atto-rust-integration-{}-{stamp}",std::process::id()));
-    fs::create_dir_all(&dir)?;
     let mut process=Command::new(file).env("PORT",port.to_string())
-        .env("DATA_DIR",dir.join("data with \"quotes\""))
+        .env("DATA_DIR",root.join("data with \"quotes\""))
         .env("PATH","/nonexistent")
         .env_remove("JAVA_HOME").env_remove("ORES_JAVA")
         .env_remove("ORESLANG_SOURCE_DIR").env_remove("CLASSPATH")
@@ -134,17 +134,15 @@ fn start(binary:&Path) -> Result<(Running,u16)> {
     let ready=Instant::now();
     while ready.elapsed()<Duration::from_secs(20) {
         if let Some(status)=process.try_wait()? {
-            let _=fs::remove_dir_all(&dir);
             return Err(format!("native server exited during startup: {status}").into());
         }
         if let Ok(ok)=request(port,"GET","/health",b"",None) {
-            if ok.status==200 { return Ok((Running { process, temporary:dir },port)); }
+            if ok.status==200 { return Ok((Running { process },port)); }
         }
         thread::sleep(Duration::from_millis(50));
     }
     let _=process.kill();
     let _=process.wait();
-    let _=fs::remove_dir_all(&dir);
     Err("native server startup timed out".into())
 }
 fn verify(port:u16)->Result<usize> {
@@ -208,21 +206,22 @@ fn run()->Result<()> {
         return Err("usage: integration --server /absolute/path/to/native/rest-server (requires real native executable)".into());
     }
     let server=PathBuf::from(&args[1]);
-    let (one,port)=start(&server)?;
+    let stamp=SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let scratch=Scratch(env::temp_dir().join(format!("atto-rust-integration-{}-{stamp}",std::process::id())));
+    fs::create_dir_all(&scratch.0)?;
+    let (one,port)=start(&server,&scratch.0)?;
     let checks=verify(port)?;
-    let path=one.temporary.join("data with \"quotes\"/baz.txt");
     drop(one);
-    let (two,again)=start_with_data(&server,path.parent().ok_or("missing data parent")?)?;
+    let (two,again)=start(&server,&scratch.0)?;
     let response=retry(again,"GET","/foo/bar/baz",b"",None)?;
     if response.status!=200 || response.body!=b"survives restart" {
         return Err("restart persistence mismatch".into());
     }
     drop(two);
-    println!("RUST_NATIVE_INTEGRATION_PASS: {} HTTP/actor-header checks and restart persistence",checks+1);
+    let saved=fs::read(scratch.0.join("data with \"quotes\"/baz.txt"))?;
+    if saved!=b"survives restart" { return Err("persisted data mismatch".into()); }
+    println!("RUST_NATIVE_INTEGRATION_PASS: {} HTTP/actor-header checks and restart persistence",checks+2);
     Ok(())
-}
-fn start_with_data(_binary:&Path,_data:&Path)->Result<(Running,u16)> {
-    Err("not yet implemented: restart with shared data; do not claim native parity".into())
 }
 fn main() {
     if let Err(error)=run() { eprintln!("FAIL: {error}"); std::process::exit(1); }
@@ -270,7 +269,7 @@ mod tests {
     #[test]
     fn trace_header_contract_is_present_in_fixture() {
         let payload=serde_json::json!({"x-request-id":"abc","x-ores-trace-id":"ores-trace-abc"});
-        let map:Value=payload;
+        let map:serde_json::Value=payload;
         assert_eq!(map["x-ores-trace-id"].as_str().unwrap(),
             format!("ores-trace-{}",map["x-request-id"].as_str().unwrap()));
     }
