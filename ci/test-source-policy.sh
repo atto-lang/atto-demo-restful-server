@@ -46,11 +46,16 @@ printf '\n' >> "$test_repo/SOURCE_REF"
 git -C "$test_repo" add .
 check_ok
 mkdir -p "$test_repo/scripts"
-printf 'legacy\n' > "$test_repo/scripts/benchmark.py"
+printf 'legacy\n' > "$test_repo/scripts/generate-routes.py"
 git -C "$test_repo" add .
 check_bad
 check_ok rest-legacy
+git -C "$test_repo" rm -q -f -- scripts/generate-routes.py
+printf 'removed legacy benchmark must stay denied\n' > "$test_repo/scripts/benchmark.py"
+git -C "$test_repo" add .
+check_bad rest-legacy
+git -C "$test_repo" rm -q -f -- scripts/benchmark.py
 printf 'new\n' > "$test_repo/scripts/new_tool.py"
 git -C "$test_repo" add .
 check_bad rest-legacy
-printf 'SOURCE_POLICY_NEGATIVE_TESTS_PASS scenarios=8\n'
+printf 'SOURCE_POLICY_NEGATIVE_TESTS_PASS scenarios=9\n'
