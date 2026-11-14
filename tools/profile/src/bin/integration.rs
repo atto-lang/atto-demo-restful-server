@@ -50,6 +50,7 @@ fn parse_http(bytes: &[u8], head: bool) -> Result<Response> {
         if !body.is_empty() { return Err("unexpected body on bodyless response".into()); }
     } else if let Some(value) = headers.get("transfer-encoding") {
         if value!="chunked" { return Err("unsupported transfer-encoding".into()); }
+        if headers.contains_key("content-length") { return Err("ambiguous framing: chunked and Content-Length".into()); }
         body = decode_chunks(&body)?;
     } else if let Some(value) = headers.get("content-length") {
         let length = value.parse::<usize>()?;
@@ -81,9 +82,11 @@ fn decode_chunks(input: &[u8]) -> Result<Vec<u8>> {
 }
 fn request(port:u16, method:&str, path:&str, body:&[u8], media_type:Option<&str>) -> Result<Response> {
     if port==0 || method.is_empty() || !method.bytes().all(|b| b.is_ascii_uppercase())
-        || !path.starts_with('/') || path.contains('\r') || path.contains('\n') {
+        || !path.starts_with('/') || !path.bytes().all(|b| b.is_ascii_graphic()) {
         return Err("unsafe HTTP request inputs".into());
     }
+    if let Some(kind) = media_type { if kind.contains('\r') || kind.contains('\n') { return Err("invalid Content-Type".into()); } }
+    if body.len()>LIMIT { return Err("request exceeds 1MiB limit".into()); }
     let mut stream = TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}").parse()?, Duration::from_secs(3))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -92,10 +95,7 @@ fn request(port:u16, method:&str, path:&str, body:&[u8], media_type:Option<&str>
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Length: {}\r\n",
         body.len()
     );
-    if let Some(kind)=media_type {
-        if kind.contains('\r') || kind.contains('\n') { return Err("invalid Content-Type".into()); }
-        header.push_str(&format!("Content-Type: {kind}\r\n"));
-    }
+    if let Some(kind)=media_type { header.push_str(&format!("Content-Type: {kind}\r\n")); }
     header.push_str("\r\n");
     stream.write_all(header.as_bytes())?;
     stream.write_all(body)?;
