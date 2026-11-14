@@ -222,3 +222,43 @@ fn special_files_in_route_tree_fail_closed() {
     assert!(t.run().is_err());
     assert!(!t.path("src/generated/routes.ores").exists());
 }
+
+#[test]
+fn malformed_second_output_cannot_partially_update_first_output() {
+    let t = Sandbox::new();
+    t.run().unwrap();
+    let original_routes = t.output("routes.ores");
+    let config = t.path("src/generated/config.ores");
+    fs::remove_file(&config).unwrap();
+    fs::create_dir(&config).unwrap();
+    t.write("src/routes/rest/extra/post.ores");
+    assert!(t.run().is_err(), "generated config directory was accepted");
+    assert_eq!(t.output("routes.ores"), original_routes,
+        "routes were partially replaced before config destination failed");
+    assert!(config.is_dir(), "preflight unexpectedly altered invalid destination");
+}
+
+#[test]
+fn reject_excessive_route_nesting_before_publication() {
+    let t = Sandbox::new();
+    let mut next = t.path("src/routes/rest");
+    for _ in 0..=MAX_DEPTH {
+        next.push("d");
+        fs::create_dir(&next).unwrap();
+    }
+    let error = t.run().unwrap_err().to_string();
+    assert!(error.contains("depth budget"), "unexpected rejection: {error}");
+    assert!(!t.path("src/generated/routes.ores").exists());
+}
+
+#[test]
+fn reject_entry_budget_during_enumeration() {
+    let t = Sandbox::new();
+    let root = t.path("src/routes/rest");
+    let mut admitted = MAX_ENTRIES;
+    let mut routes = Vec::new();
+    let result = traverse(&root, &root, 0, &mut admitted, &mut routes);
+    assert!(result.is_err(), "admitted an entry beyond the global budget");
+    assert_eq!(routes.len(), 0);
+    assert!(!t.path("src/generated/routes.ores").exists());
+}
