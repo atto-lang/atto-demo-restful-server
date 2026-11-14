@@ -1,11 +1,16 @@
 //! Fail-closed host route generator for the legacy .ores REST demo.
 //! Rust host tooling does not establish .atto guest or compiler parity.
 use std::{
-    env, error::Error, ffi::OsStr,
-    fs::{self, OpenOptions}, io::Write,
+    env, error::Error,
     path::{Path, PathBuf}, process,
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::atomic::AtomicU64,
+};
+// The portable fallback and legacy regression fixtures still use path-based
+// APIs, but Linux production builds should not import unused fallback code.
+#[cfg(any(test, not(target_os = "linux")))]
+use std::{
+    ffi::OsStr, fs::{self, OpenOptions}, io::Write,
+    sync::atomic::Ordering, time::{SystemTime, UNIX_EPOCH},
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 static UNIQUE: AtomicU64 = AtomicU64::new(0);
