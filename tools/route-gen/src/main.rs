@@ -286,3 +286,6 @@ mod tests {
         assert!(!t.generated("routes.ores").exists());
     }
 }
+
+#[cfg(test)]
+mod publication_tests;
