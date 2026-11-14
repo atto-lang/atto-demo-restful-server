@@ -49,7 +49,7 @@ pub(super) fn validate(log: &str, observations: &[Observation]) -> Result<usize>
         let span_id = root["span_id"].as_str().ok_or("root span id missing")?;
         let children: Vec<&Value> = parsed.iter().filter(|row|
             row["signal"].as_str() == Some("span") &&
-            row["ores_trace_id"].as_str() == Some(&observation.trace) &&
+            row["ores_trace_id"].as_str() == Some(observation.trace.as_str()) &&
             row["parent_span_id"].as_str() == Some(span_id)
         ).collect();
         let required: HashSet<&str> =
@@ -113,22 +113,12 @@ mod tests {
             "ores_trace_id":"ores-trace-abc","value":1});
         let duration = serde_json::json!({"schema":"v1","signal":"metric","name":"http.server.request.duration",
             "ores_trace_id":"ores-trace-abc","value":17});
-        let log = [root,route,actor,requests,duration].into_iter()
-            .map(|row| serde_json::to_string(&row).unwrap())
-            .collect::<Vec<_>>().join("\n");
-        // The emission contract places "schema" first. Normal serde_json::Map
-        // sorting does so for these keys, but explicitly normalize our fixtures.
-        let log = log.lines().map(|line|
-            if line.starts_with("{\"schema\":") { line.to_owned() }
-            else {
-                let parsed:Value = serde_json::from_str(line).unwrap();
-                let mut serialized = String::from("{\"schema\":\"v1\",");
-                let rest = serde_json::to_string(&parsed).unwrap();
-                serialized.push_str(rest.trim_start_matches('{').trim_end_matches('}'));
-                serialized.push('}');
-                serialized
-            }
-        ).collect::<Vec<_>>().join("\n");
+        // Ensure schema is the first key just like the production emitter.
+        let log = [root,route,actor,requests,duration].into_iter().map(|mut row| {
+            row.as_object_mut().unwrap().remove("schema");
+            let data = serde_json::to_string(&row).unwrap();
+            format!("{{\"schema\":\"v1\",{}}}", &data[1..data.len()-1])
+        }).collect::<Vec<_>>().join("\n");
         (log, obs)
     }
     #[test]
