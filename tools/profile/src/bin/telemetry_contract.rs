@@ -76,6 +76,32 @@ pub(super) fn validate(log: &str, observations: &[Observation]) -> Result<usize>
     }
     Ok(observations.len())
 }
+pub(super) fn validate_handler_error(log: &str, trace: &str) -> Result<()> {
+    if trace.is_empty() { return Err("error trace ID missing".into()); }
+    if log.contains("do-not-log") { return Err("confidential query leaked into telemetry".into()); }
+    let parsed=rows(log)?;
+    let errors=matches_row(&parsed,"metric","http.server.errors",trace);
+    if errors.len()!=1 || errors[0]["value"].as_u64()!=Some(1) {
+        return Err("missing, duplicated or incorrect HTTP server error metric".into());
+    }
+    let spans=matches_row(&parsed,"span","actor.handle",trace);
+    if spans.len()!=1 || spans[0]["outcome"].as_str()!=Some("error") {
+        return Err("missing or malformed actor handler error span".into());
+    }
+    Ok(())
+}
+pub(super) fn wait_for_handler_error(log_path: &Path, trace: &str) -> Result<()> {
+    let deadline=Instant::now()+Duration::from_secs(4);
+    loop {
+        let log=fs::read_to_string(log_path)?;
+        match validate_handler_error(&log,trace) {
+            Ok(()) => return Ok(()),
+            Err(_) if Instant::now()<deadline => thread::sleep(Duration::from_millis(20)),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 pub(super) fn wait_for_complete(log_path: &Path, observations: &[Observation]) -> Result<usize> {
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
@@ -148,6 +174,27 @@ mod tests {
         assert!(validate(&(log.clone()+"\ndo-not-log"),&observations).is_err());
         observations.push(observations[0].clone());
         assert!(validate(&log,&observations).is_err());
+    }
+    #[test]
+    fn handler_error_requires_both_single_metric_and_error_span() {
+        let span=serde_json::json!({"schema":"v1","signal":"span","name":"actor.handle",
+            "ores_trace_id":"ores-trace-failed","outcome":"error"});
+        let metric=serde_json::json!({"schema":"v1","signal":"metric","name":"http.server.errors",
+            "ores_trace_id":"ores-trace-failed","value":1});
+        let encode=|mut row:Value| {
+            row.as_object_mut().unwrap().remove("schema");
+            let body=serde_json::to_string(&row).unwrap();
+            format!("{{\"schema\":\"v1\",{}}}", &body[1..body.len()-1])
+        };
+        let raw_span=encode(span);
+        let raw_metric=encode(metric);
+        let log=format!("{raw_span}\n{raw_metric}");
+        assert!(validate_handler_error(&log,"ores-trace-failed").is_ok());
+        assert!(validate_handler_error(&raw_span,"ores-trace-failed").is_err());
+        assert!(validate_handler_error(&raw_metric,"ores-trace-failed").is_err());
+        assert!(validate_handler_error(&log,"wrong-trace").is_err());
+        assert!(validate_handler_error(&(log.clone()+"\n"+&raw_metric),"ores-trace-failed").is_err());
+        assert!(validate_handler_error(&(log+"\ndo-not-log"),"ores-trace-failed").is_err());
     }
     #[test]
     fn malformed_emitted_json_is_rejected() {
