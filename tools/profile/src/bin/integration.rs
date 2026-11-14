@@ -35,24 +35,40 @@ fn parse_http(bytes: &[u8], head: bool) -> Result<Response> {
         return Err("invalid HTTP/1.x status line".into());
     }
     let status: u16 = code.parse()?;
+    // This driver expects a final response, not a 1xx interim message or a
+    // syntactically valid but undefined 6xx/9xx status.
+    if !(200..=599).contains(&status) { return Err("invalid final HTTP status".into()); }
     let mut headers = HashMap::new();
     for line in lines {
         let (key, value) = line.split_once(':').ok_or("malformed HTTP response header")?;
-        if !key.bytes().all(|b| b.is_ascii_alphanumeric() || b==b'-') {
+        if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b==b'-') {
             return Err("invalid HTTP header name".into());
+        }
+        if value.bytes().any(|b| b.is_ascii_control() && b != b'\t') {
+            return Err("HTTP header contains forbidden control byte".into());
         }
         if headers.insert(key.to_ascii_lowercase(), value.trim().to_owned()).is_some() {
             return Err("duplicate HTTP header".into());
         }
     }
     let mut body = bytes[offset+4..].to_vec();
-    if head || status==204 || status==304 || (100..200).contains(&status) {
+    if status==204 && (headers.contains_key("content-length") ||
+                       headers.contains_key("transfer-encoding")) {
+        return Err("204 must not carry body framing".into());
+    }
+    if head || status==204 || status==304 {
         if !body.is_empty() { return Err("unexpected body on bodyless response".into()); }
+        if headers.contains_key("transfer-encoding") {
+            return Err("unsupported Transfer-Encoding on bodyless response".into());
+        }
     } else if let Some(value) = headers.get("transfer-encoding") {
         if value!="chunked" { return Err("unsupported transfer-encoding".into()); }
         if headers.contains_key("content-length") { return Err("ambiguous framing: chunked and Content-Length".into()); }
         body = decode_chunks(&body)?;
     } else if let Some(value) = headers.get("content-length") {
+        if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("invalid Content-Length syntax".into());
+        }
         let length = value.parse::<usize>()?;
         if length != body.len() { return Err("HTTP Content-Length mismatch".into()); }
     }
@@ -208,7 +224,8 @@ fn run()->Result<()> {
     let server=PathBuf::from(&args[1]);
     let stamp=SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let scratch=Scratch(env::temp_dir().join(format!("atto-rust-integration-{}-{stamp}",std::process::id())));
-    fs::create_dir_all(&scratch.0)?;
+    // create_dir is exclusive; create_dir_all could reuse a pre-planted symlink.
+    fs::create_dir(&scratch.0)?;
     let (one,port)=start(&server,&scratch.0)?;
     let checks=verify(port)?;
     drop(one);
@@ -266,6 +283,40 @@ mod tests {
         assert_eq!(response.body,b"OK");
         server.join().unwrap();
     }
+    #[test]
+    fn reject_ambiguous_framing_control_bytes_and_invalid_final_status() {
+        for packet in [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\nOK".as_slice(),
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".as_slice(),
+            b"HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: +2\r\n\r\nOK".as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2, 2\r\n\r\nOK".as_slice(),
+            b"HTTP/1.1 200 OK\r\nX-Value: abc\x00def\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nX-Value: abc\x7fdef\r\n\r\n".as_slice(),
+            b"HTTP/1.1 100 Continue\r\n\r\n".as_slice(),
+            b"HTTP/1.1 999 Unknown\r\n\r\n".as_slice(),
+        ] {
+            assert!(parse_http(packet,false).is_err(), "accepted invalid HTTP framing: {packet:?}");
+        }
+        // HEAD can advertise representation length without returning a body.
+        let head = parse_http(b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\n\r\n",true).unwrap();
+        assert_eq!(head.status,200);
+        assert!(head.body.is_empty());
+        assert!(parse_http(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",true).is_err());
+    }
+
+    #[test]
+    fn malformed_chunk_boundaries_and_trailers_are_rejected() {
+        for payload in [
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2;ext=yes\r\nOK\r\n0\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nOK\r\n0\r\nX: y\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nOK\r\n0\r\n\r\ntrailing".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nfffffffffffffffffffffffff\r\nOK\r\n".as_slice(),
+        ] {
+            assert!(parse_http(payload,false).is_err(), "accepted malformed chunked stream: {payload:?}");
+        }
+    }
+
     #[test]
     fn trace_header_contract_is_present_in_fixture() {
         let payload=serde_json::json!({"x-request-id":"abc","x-ores-trace-id":"ores-trace-abc"});
