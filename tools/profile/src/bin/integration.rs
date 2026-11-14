@@ -282,6 +282,18 @@ fn run()->Result<()> {
     let (mut one,port)=start(&server,&scratch.0)?;
     let (checks,traces)=verify(port)?;
     let verified=telemetry_contract::wait_for_complete(&one.log,&traces)?;
+    // Reproduce the Python E2E storage-failure fixture without a test-only
+    // route: a directory at the data-file leaf forces a real handler failure.
+    let storage=scratch.0.join("data with \"quotes\"/baz.txt");
+    let original=fs::read(&storage)?;
+    fs::remove_file(&storage)?;
+    fs::create_dir(&storage)?;
+    let failed=retry(port,"GET","/foo/bar/baz",b"",None)?;
+    if failed.status!=500 { return Err("expected HTTP 500 after storage leaf disruption".into()); }
+    let error_trace=failed.header("x-ores-trace-id")?.to_owned();
+    telemetry_contract::wait_for_handler_error(&one.log,&error_trace)?;
+    fs::remove_dir(&storage)?;
+    fs::write(&storage,original)?;
     one.stop_with_term()?;
     drop(one);
     let (mut two,again)=start(&server,&scratch.0)?;
@@ -293,7 +305,7 @@ fn run()->Result<()> {
     drop(two);
     let saved=fs::read(scratch.0.join("data with \"quotes\"/baz.txt"))?;
     if saved!=b"survives restart" { return Err("persisted data mismatch".into()); }
-    println!("RUST_NATIVE_INTEGRATION_PASS: {} HTTP/actor-header checks, {} complete telemetry traces, two bounded SIGTERM shutdowns, restart persistence", checks+2,verified);
+    println!("RUST_NATIVE_INTEGRATION_PASS: {} HTTP/actor-header checks, {} complete telemetry traces, 1 HTTP 500 actor error metric/span, two bounded SIGTERM shutdowns, restart persistence", checks+3,verified);
     Ok(())
 }
 fn main() {
