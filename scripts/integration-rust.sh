@@ -7,4 +7,4 @@ if [[ $# -ne 1 || -z "$1" ]]; then
   echo 'Usage: bash scripts/integration-rust.sh /absolute/path/to/native/rest-server' >&2
   exit 64
 fi
-exec cargo run --quiet --offline --locked --manifest-path "$root/tools/profile/Cargo.toml" --bin integration -- --server "$1"
+exec cargo run --quiet --locked --manifest-path "$root/tools/profile/Cargo.toml" --bin integration -- --server "$1"
