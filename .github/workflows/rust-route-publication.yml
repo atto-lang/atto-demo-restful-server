@@ -24,6 +24,12 @@ jobs:
           git diff --quiet
           git diff --cached --quiet
           bash -n scripts/generate-routes.sh
+          bash -n scripts/run-server.sh
+          bash -n scripts/build-native.sh
+          grep -Fq 'bash "$root/scripts/generate-routes.sh" --port "$port" --data-dir "$data_dir"' scripts/run-server.sh
+          grep -Fq 'bash "$root/scripts/generate-routes.sh"' scripts/build-native.sh
+          ! grep -Fq 'python3 "$root/scripts/generate-routes.py"' scripts/run-server.sh
+          ! grep -Fq 'python3 "$root/scripts/generate-routes.py"' scripts/build-native.sh
       - name: Compile and execute Rust route generator adversarial tests
         shell: bash
         run: |
