@@ -25,6 +25,14 @@ jobs:
           git diff --cached --quiet
           bash -n scripts/generate-routes.sh
           bash -n scripts/integration-rust.sh
+          bash -n scripts/verify-native-release.sh
+          set +e
+          env -u JAVA_HOME -u ORESLANG_SOURCE_DIR bash scripts/verify-native-release.sh aot > "$RUNNER_TEMP/missing-native-proof.log" 2>&1
+          missing_status=$?
+          set -e
+          test "$missing_status" -ne 0
+          ! grep -Fq REST_NATIVE_FULL_GUEST_PASS "$RUNNER_TEMP/missing-native-proof.log"
+          echo 'FULL_NATIVE_FAIL_CLOSED_PASS: no compiler/GraalVM available, no false success'
           bash -n scripts/run-server.sh
           bash -n scripts/build-native.sh
           grep -Fq 'bash "$root/scripts/generate-routes.sh" --port "$port" --data-dir "$data_dir"' scripts/run-server.sh
