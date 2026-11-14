@@ -18,6 +18,7 @@ const METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "opt
 #[derive(Debug)]
 struct Route { method: String, parts: Vec<String>, path: PathBuf }
 
+#[cfg(any(test, not(target_os = "linux")))]
 fn real_dir(path: &Path) -> Result<()> {
     if !fs::symlink_metadata(path)?.file_type().is_dir() {
         return Err(format!("not a real directory (symlink forbidden): {}", path.display()).into());
@@ -48,6 +49,7 @@ fn json_quote(text: &str) -> String {
 fn valid_segment(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'-' || c==b'_')
 }
+#[cfg(any(test, not(target_os = "linux")))]
 fn traverse(root: &Path, dir: &Path, depth: usize, entries: &mut usize, routes: &mut Vec<Route>) -> Result<()> {
     if depth > MAX_DEPTH { return Err("route directory depth budget exceeded".into()); }
     // Enforce the limit *while* reading, not after collecting an unbounded directory.
@@ -82,6 +84,7 @@ fn traverse(root: &Path, dir: &Path, depth: usize, entries: &mut usize, routes: 
     }
     Ok(())
 }
+#[cfg(not(target_os = "linux"))]
 fn discover(project: &Path) -> Result<Vec<Route>> {
     let source = project.join("src");
     real_dir(&source)?;
@@ -123,6 +126,7 @@ fn render(project: &Path, routes: &[Route], port: u16, data_dir: &Path) -> Resul
         json_quote(&data_dir.join("baz.txt").to_string_lossy()));
     Ok((lines.join("\n"), config))
 }
+#[cfg(any(test, not(target_os = "linux")))]
 fn publish(dest: &Path, text: &str) -> Result<()> {
     let parent = dest.parent().ok_or("missing output parent")?;
     real_dir(parent)?;
@@ -153,6 +157,7 @@ fn publish(dest: &Path, text: &str) -> Result<()> {
     Err("cannot reserve temporary publication entry".into())
 }
 // A deterministic bad second destination must not modify the first artifact.
+#[cfg(not(target_os = "linux"))]
 fn preflight_destination(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_file() || meta.file_type().is_symlink() => Ok(()),
