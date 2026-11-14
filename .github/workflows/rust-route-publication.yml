@@ -1,0 +1,46 @@
+name: Rust route publisher host tests and exact-byte parity
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  rust-route-publisher:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Pin PR head and validate shell
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --quiet
+          git diff --cached --quiet
+          bash -n scripts/generate-routes.sh
+      - name: Compile and execute Rust route generator adversarial tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --offline --locked --manifest-path tools/route-gen/Cargo.toml
+      - name: Compare Rust routes and config against original Python oracle byte-for-byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf -- "$tmp"' EXIT
+          data_dir="$PWD/.cache/route-gen-parity-data"
+          python3 scripts/generate-routes.py --port 3217 --data-dir "$data_dir"
+          cp src/generated/routes.ores "$tmp/routes.ores"
+          cp src/generated/config.ores "$tmp/config.ores"
+          bash scripts/generate-routes.sh --port 3217 --data-dir "$data_dir"
+          cmp "$tmp/routes.ores" src/generated/routes.ores
+          cmp "$tmp/config.ores" src/generated/config.ores
+          printf 'RUST_ROUTE_PARITY_PASS: both generated source files exactly match existing Python oracle\n'
+          printf 'HOST_ONLY: no native guest/compiler or AOT execution performed\n'
