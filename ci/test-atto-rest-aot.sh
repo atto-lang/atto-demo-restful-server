@@ -17,19 +17,25 @@ if [[ "$mode" == rs ]]; then
   "$compiler" --strict-aot "$source" "$tmp/guest.o"
   [[ -s "$tmp/guest.o" ]] || { echo 'Rust backend produced no native object' >&2; exit 1; }
   cc "$tmp/guest.o" -o "$tmp/guest"
-  if "$compiler" --strict-aot "$unsupported" "$tmp/rejected.o" >"$tmp/negative.out" 2>"$tmp/negative.err"; then
-    echo 'FAIL: Rust backend incorrectly admitted unsupported HTTP/actor guest' >&2
-    exit 1
-  fi
+  # A crash, timeout, or invocation failure must never count as proper rejection.
+  set +e
+  timeout --signal=TERM --kill-after=5s 30s "$compiler" --strict-aot "$unsupported" "$tmp/rejected.o" >"$tmp/negative.out" 2>"$tmp/negative.err"
+  rejection_status=$?
+  set -e
+  [[ "$rejection_status" == 1 ]] || { echo "FAIL: expected semantic compiler exit 1, got $rejection_status" >&2; exit 1; }
+  grep -Fq 'oresc:' "$tmp/negative.err" || { echo 'FAIL: missing canonical Rust compiler diagnostic' >&2; exit 1; }
+  [[ ! -s "$tmp/negative.out" ]] || { echo 'FAIL: rejected Rust guest emitted stdout' >&2; exit 1; }
   [[ ! -e "$tmp/rejected.o" ]] || { echo 'FAIL: Rust backend emitted invalid HTTP object' >&2; exit 1; }
 else
   "$compiler" "$source" > "$tmp/guest.ll"
   grep -Fq 'define ' "$tmp/guest.ll" || { echo 'LLVM backend did not emit LLVM IR' >&2; exit 1; }
   clang -x ir "$tmp/guest.ll" -o "$tmp/guest"
-  if "$compiler" "$unsupported" > "$tmp/rejected.ll" 2>"$tmp/negative.err"; then
-    echo 'FAIL: LLVM backend incorrectly admitted unsupported HTTP/actor guest' >&2
-    exit 1
-  fi
+  set +e
+  timeout --signal=TERM --kill-after=5s 30s "$compiler" "$unsupported" > "$tmp/rejected.ll" 2>"$tmp/negative.err"
+  rejection_status=$?
+  set -e
+  [[ "$rejection_status" == 1 ]] || { echo "FAIL: expected LLVM semantic compiler exit 1, got $rejection_status" >&2; exit 1; }
+  grep -Fq 'oreslang-llvmc:' "$tmp/negative.err" || { echo 'FAIL: missing canonical LLVM compiler diagnostic' >&2; exit 1; }
   if grep -Fq 'define ' "$tmp/rejected.ll"; then
     echo 'FAIL: LLVM backend emitted executable IR for unsupported guest' >&2
     exit 1
