@@ -1,8 +1,10 @@
 //! Native-deployment HTTP integration driver, replacing the Python request driver in stages.
 //! Unit tests use a real loopback TCP server; production smoke requires an explicit server binary.
+mod telemetry_contract;
+use telemetry_contract::Observation;
 use std::{
     collections::{HashMap, HashSet},
-    env, error::Error, fs,
+    env, error::Error, fs::{self, OpenOptions},
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -128,32 +130,66 @@ fn retry(port:u16, method:&str, path:&str, body:&[u8], ct:Option<&str>) -> Resul
     }
     Err("server admission did not recover after 50 attempts".into())
 }
-struct Running { process: Child }
+struct Running { process: Child, log: PathBuf }
 impl Drop for Running {
     fn drop(&mut self) {
         let _=self.process.kill();
         let _=self.process.wait();
     }
 }
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+impl Running {
+    #[cfg(unix)]
+    fn stop_with_term(&mut self) -> Result<()> {
+        if self.process.try_wait()?.is_some() {
+            return Err("native server exited before graceful shutdown request".into());
+        }
+        let pid = i32::try_from(self.process.id())?;
+        // SAFETY: positive child pid obtained from this owned Child; POSIX
+        // signal 15 is SIGTERM. No shell, PATH or external process is used.
+        if unsafe { kill(pid, 15) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(8) {
+            if self.process.try_wait()?.is_some() { return Ok(()); }
+            thread::sleep(Duration::from_millis(25));
+        }
+        Err("native server failed to terminate after SIGTERM (SIGKILL fallback is a test failure)".into())
+    }
+    #[cfg(not(unix))]
+    fn stop_with_term(&mut self) -> Result<()> {
+        Err("native graceful termination contract requires Unix SIGTERM".into())
+    }
+}
 struct Scratch(PathBuf);
-impl Drop for Scratch { fn drop(&mut self) { let _=fs::remove_dir_all(&self.0); } }
+impl Drop for Scratch {
+    fn drop(&mut self) { let _=fs::remove_dir_all(&self.0); }
+}
 fn start(binary:&Path, root:&Path) -> Result<(Running,u16)> {
     let file=fs::canonicalize(binary)?;
     if !file.is_file() { return Err("native server is not a regular file".into()); }
     let port=TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    let stamp=SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let log=root.join(format!("native-rest-{stamp}.log"));
+    let output=OpenOptions::new().append(true).create_new(true).open(&log)?;
+    let stderr=output.try_clone()?;
     let mut process=Command::new(file).env("PORT",port.to_string())
         .env("DATA_DIR",root.join("data with \"quotes\""))
         .env("PATH","/nonexistent")
         .env_remove("JAVA_HOME").env_remove("ORES_JAVA")
         .env_remove("ORESLANG_SOURCE_DIR").env_remove("CLASSPATH")
-        .stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+        .stdout(Stdio::from(output)).stderr(Stdio::from(stderr)).spawn()?;
     let ready=Instant::now();
     while ready.elapsed()<Duration::from_secs(20) {
         if let Some(status)=process.try_wait()? {
             return Err(format!("native server exited during startup: {status}").into());
         }
         if let Ok(ok)=request(port,"GET","/health",b"",None) {
-            if ok.status==200 { return Ok((Running { process },port)); }
+            if ok.status==200 { return Ok((Running { process,log },port)); }
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -161,7 +197,7 @@ fn start(binary:&Path, root:&Path) -> Result<(Running,u16)> {
     let _=process.wait();
     Err("native server startup timed out".into())
 }
-fn verify(port:u16)->Result<usize> {
+fn verify(port:u16)->Result<(usize,Vec<Observation>)> {
     let mut count=0;
     let cases: [(&str,&str,&[u8],Option<&str>,u16);8]=[
         ("GET","/not-found",b"",None,404),
@@ -201,6 +237,7 @@ fn verify(port:u16)->Result<usize> {
     }
     count+=1;
     let mut ids=HashSet::new();
+    let mut observations=Vec::new();
     for (method,path,expected,actor) in [
         ("GET","/health",200,"shared"),("HEAD","/health",200,"shared"),
         ("GET","/missing?secret=do-not-log",404,"supervisor"),
@@ -212,9 +249,14 @@ fn verify(port:u16)->Result<usize> {
             !ids.insert(res.header("x-request-id")?.to_owned()) {
             return Err(format!("trace or actor headers mismatch for {method} {path}").into());
         }
+        observations.push(Observation {
+            trace: res.header("x-ores-trace-id")?.to_owned(),
+            status: expected,
+            actor: actor=="shared",
+        });
         count+=1;
     }
-    Ok(count)
+    Ok((count,observations))
 }
 fn run()->Result<()> {
     let args:Vec<_>=env::args().skip(1).collect();
@@ -226,18 +268,21 @@ fn run()->Result<()> {
     let scratch=Scratch(env::temp_dir().join(format!("atto-rust-integration-{}-{stamp}",std::process::id())));
     // create_dir is exclusive; create_dir_all could reuse a pre-planted symlink.
     fs::create_dir(&scratch.0)?;
-    let (one,port)=start(&server,&scratch.0)?;
-    let checks=verify(port)?;
+    let (mut one,port)=start(&server,&scratch.0)?;
+    let (checks,traces)=verify(port)?;
+    let verified=telemetry_contract::wait_for_complete(&one.log,&traces)?;
+    one.stop_with_term()?;
     drop(one);
-    let (two,again)=start(&server,&scratch.0)?;
+    let (mut two,again)=start(&server,&scratch.0)?;
     let response=retry(again,"GET","/foo/bar/baz",b"",None)?;
     if response.status!=200 || response.body!=b"survives restart" {
         return Err("restart persistence mismatch".into());
     }
+    two.stop_with_term()?;
     drop(two);
     let saved=fs::read(scratch.0.join("data with \"quotes\"/baz.txt"))?;
     if saved!=b"survives restart" { return Err("persisted data mismatch".into()); }
-    println!("RUST_NATIVE_INTEGRATION_PASS: {} HTTP/actor-header checks and restart persistence",checks+2);
+    println!("RUST_NATIVE_INTEGRATION_PASS: {} HTTP/actor-header checks, {} complete telemetry traces, two bounded SIGTERM shutdowns, restart persistence", checks+2,verified);
     Ok(())
 }
 fn main() {
@@ -317,6 +362,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn posix_shutdown_uses_sigterm_without_forced_kill() {
+        let child=Command::new("sleep").arg("30").spawn().unwrap();
+        let mut running=Running { process: child, log: PathBuf::new() };
+        running.stop_with_term().unwrap();
+        assert!(running.process.try_wait().unwrap().is_some());
+    }
     #[test]
     fn trace_header_contract_is_present_in_fixture() {
         let payload=serde_json::json!({"x-request-id":"abc","x-ores-trace-id":"ores-trace-abc"});
