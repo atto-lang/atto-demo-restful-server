@@ -8,7 +8,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -141,6 +141,14 @@ impl Drop for Running {
 unsafe extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
 }
+#[cfg(unix)]
+fn expected_termination(status: ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    // Native-image may return 143 after running a shutdown hook. A process
+    // killed by SIGSEGV/SIGKILL or returning an arbitrary error is not a
+    // graceful shutdown, even if it exits promptly.
+    status.success() || status.signal() == Some(15) || status.code() == Some(143)
+}
 impl Running {
     #[cfg(unix)]
     fn stop_with_term(&mut self) -> Result<()> {
@@ -155,7 +163,10 @@ impl Running {
         }
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(8) {
-            if self.process.try_wait()?.is_some() { return Ok(()); }
+            if let Some(status) = self.process.try_wait()? {
+                if expected_termination(status) { return Ok(()); }
+                return Err(format!("native server exited abnormally during SIGTERM shutdown: {status}").into());
+            }
             thread::sleep(Duration::from_millis(25));
         }
         Err("native server failed to terminate after SIGTERM (SIGKILL fallback is a test failure)".into())
@@ -362,6 +373,17 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unexpected_native_crashes_are_not_graceful_shutdown() {
+        use std::os::unix::process::ExitStatusExt;
+        for accepted in [0, 15, 143<<8] {
+            assert!(expected_termination(ExitStatus::from_raw(accepted)));
+        }
+        for rejected in [9, 11, 6, 1<<8, 139<<8] {
+            assert!(!expected_termination(ExitStatus::from_raw(rejected)));
+        }
+    }
     #[cfg(unix)]
     #[test]
     fn posix_shutdown_uses_sigterm_without_forced_kill() {
