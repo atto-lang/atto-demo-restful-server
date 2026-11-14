@@ -51,6 +51,7 @@ git -C "$test_repo" add .
 check_bad
 check_ok rest-legacy
 git -C "$test_repo" rm -q -f -- scripts/generate-routes.py
+mkdir -p "$test_repo/scripts"
 printf 'removed legacy benchmark must stay denied\n' > "$test_repo/scripts/benchmark.py"
 git -C "$test_repo" add .
 check_bad rest-legacy
