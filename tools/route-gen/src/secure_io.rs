@@ -17,7 +17,7 @@ use std::{
         raw::{c_char, c_int, c_uint},
         unix::{ffi::OsStrExt, fs::PermissionsExt},
     },
-    path::{Path, PathBuf},
+    path::Path,
     process,
     sync::atomic::Ordering,
     time::{SystemTime, UNIX_EPOCH},
@@ -224,7 +224,7 @@ pub(super) fn generate(project: &Path, port: u16, data_dir: &Path) -> Result<usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
+    use std::{os::unix::fs::symlink, path::PathBuf};
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
