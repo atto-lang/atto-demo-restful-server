@@ -15,3 +15,11 @@ The caller-supplied **project root and its path ancestors** must be trusted; the
 On **non-Linux hosts** the existing portable standard-library publisher remains in use for compatibility. It prevents *static* symlink traversals but **does not** have the descriptor-relative path-redirection guarantees. A platform-native descriptor-relative backend is a separate task.
 
 The descriptor-relative implementation has no external Rust dependencies. Linux requires `/proc/self/fd`; a missing or inaccessible procfs makes the generator fail closed rather than silently falling back to the path-based implementation.
+
+### Native HTTP, telemetry and release verification
+
+`cargo test --locked --manifest-path tools/profile/Cargo.toml --bin integration` exercises the Rust native HTTP request parser, real loopback socket, telemetry row/trace/metric validation, and Unix graceful-termination decision logic. This is **host coverage only**.
+
+`bash scripts/verify-native-release.sh aot` or `bash scripts/verify-native-release.sh hybrid` is a deliberately separate **full-application acceptance gate**. It requires `JAVA_HOME` to point to an installed GraalVM with `native-image`, and `ORESLANG_SOURCE_DIR` to the exact permitted, clean Java compiler checkout pinned by `SOURCE_REF`. The pre-existing native builder compiles and packages the full legacy `.ores` application, and only then does `scripts/integration-rust.sh` execute it. The runner verifies native HTTP statuses, actor/trace request headers, telemetry root/child spans and duration metrics, query redaction, persisted data across restart, and bounded SIGTERM termination without forced SIGKILL or abnormal crash exit.
+
+The public source CI **does not** have the private compiler/GraalVM setup: instead it tests that the release verifier refuses to claim success without those prerequisites. The marker `REST_NATIVE_FULL_GUEST_PASS` is emitted **only after** native compilation and live integration succeed. A missing binary, unavailable SDK, unsupported source feature, unapproved compiler checkout, failed telemetry or abnormal shutdown must fail the gate. Neither unit-test green checks nor the independent scalar AOT canary prove full HTTP/actor application execution.
