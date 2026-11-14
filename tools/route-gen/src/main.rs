@@ -10,6 +10,8 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 static UNIQUE: AtomicU64 = AtomicU64::new(0);
 const MAX_ENTRIES: usize = 10_000;
+// Bounds recursion even when a directory tree contains very few entries.
+const MAX_DEPTH: usize = 64;
 const MAX_ROUTES: usize = 4_096;
 const METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
 
@@ -46,16 +48,21 @@ fn json_quote(text: &str) -> String {
 fn valid_segment(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'-' || c==b'_')
 }
-fn traverse(root: &Path, dir: &Path, entries: &mut usize, routes: &mut Vec<Route>) -> Result<()> {
-    let mut children = fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+fn traverse(root: &Path, dir: &Path, depth: usize, entries: &mut usize, routes: &mut Vec<Route>) -> Result<()> {
+    if depth > MAX_DEPTH { return Err("route directory depth budget exceeded".into()); }
+    // Enforce the limit *while* reading, not after collecting an unbounded directory.
+    let mut children = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        *entries = entries.checked_add(1).ok_or("route entry budget overflow")?;
+        if *entries > MAX_ENTRIES { return Err("route entry budget exceeded".into()); }
+        children.push(entry?);
+    }
     children.sort_by_key(|entry| entry.path());
     for child in children {
-        *entries += 1;
-        if *entries > MAX_ENTRIES { return Err("route entry budget exceeded".into()); }
         let path = child.path();
         let ty = fs::symlink_metadata(&path)?.file_type();
         if ty.is_symlink() { return Err(format!("symlink in route tree: {}", path.display()).into()); }
-        if ty.is_dir() { traverse(root, &path, entries, routes)?; continue; }
+        if ty.is_dir() { traverse(root, &path, depth + 1, entries, routes)?; continue; }
         if !ty.is_file() { return Err("special filesystem entry in route tree".into()); }
         if path.extension() != Some(OsStr::new("ores")) { continue; }
         let method = path.file_stem().and_then(OsStr::to_str).ok_or("invalid method encoding")?;
@@ -83,7 +90,7 @@ fn discover(project: &Path) -> Result<Vec<Route>> {
     real_dir(&root)?;
     let mut count = 0;
     let mut routes = Vec::new();
-    traverse(&root, &root, &mut count, &mut routes)?;
+    traverse(&root, &root, 0, &mut count, &mut routes)?;
     routes.sort_by(|a,b| a.path.cmp(&b.path));
     if routes.is_empty() { return Err("no REST routes found".into()); }
     Ok(routes)
@@ -145,6 +152,15 @@ fn publish(dest: &Path, text: &str) -> Result<()> {
     }
     Err("cannot reserve temporary publication entry".into())
 }
+// A deterministic bad second destination must not modify the first artifact.
+fn preflight_destination(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() || meta.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(format!("generated source destination must be a file or replaceable symlink: {}", path.display()).into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
 fn generate(project: &Path, port: u16, data_dir: &Path) -> Result<usize> {
     if port == 0 { return Err("port must be in 1..65535".into()); }
     let routes = discover(project)?;
@@ -156,6 +172,8 @@ fn generate(project: &Path, port: u16, data_dir: &Path) -> Result<usize> {
     let (sources, config) = render(project, &routes, port, &data)?;
     fs::create_dir_all(&output)?;
     real_dir(&output)?;
+    preflight_destination(&output.join("routes.ores"))?;
+    preflight_destination(&output.join("config.ores"))?;
     publish(&output.join("routes.ores"), &sources)?;
     publish(&output.join("config.ores"), &config)?;
     Ok(routes.len())
