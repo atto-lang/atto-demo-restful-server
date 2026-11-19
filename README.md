@@ -12,6 +12,26 @@ HTTP runtime. Every matched request gets a fresh actor. Read handlers use shared
 actors; mutation handlers use isolated actors that exclusively claim the moved
 HTTP exchange.
 
+## Canonical-language compatibility boundary
+
+This PR preserves an executable **legacy Oreslang** demo as migration input, not a completed canonical AttoLang `.atto` implementation. Its checked-in `.ores` sources and Python build/test helpers are migration blockers; no AttoLang native-guest parity or production release is implied. Keep this PR draft until a separate audited `.atto` guest port, Rust supporting tests, and compiler-backed execution evidence are available.
+
+## Naming migration and language authority
+
+This repository is maintained at [atto-lang/atto-demo-restful-server](https://github.com/atto-lang/atto-demo-restful-server); use `https://github.com/atto-lang/atto-demo-restful-server.git` for Git remotes and canonical `.atto` source examples. The normative language contract is [atto-spec](https://github.com/atto-lang/atto-spec), with executable guest evidence tracked by [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance). Follow current ownership, borrowing, effects, actor, and syntax rules there; do not infer implemented features from a README or unexecuted CI.
+
+## Repository ownership and contribution routing
+
+**Belongs here:** Runnable reference REST server and actor-backed HTTP request/response examples, routes, fixtures and deployment notes.
+
+**Belongs elsewhere:** Reusable routing semantics in atto-http-routing, generic API app scaffold in atto-api-server.atto and performance data in atto-restful-server-perf-benchmarks.
+
+**Security and portability boundary:** Bind host and ports explicitly, validate requests and cancellation, bound response sizes, and document security settings before internet exposure.
+
+AttoLang is the canonical project name; new source, examples and documentation use `.atto` and the `atto-lang` repository organization. This README defines scope, not feature readiness.
+
+**Acceptance:** name exact source SHA/tree, runtime/toolchain, positive and negative checks and execution receipt before claiming support. Host-only tests and empty CI steps do not prove guest execution.
+
 ## Run
 
 Prerequisites: **Bash 5** (for source-policy checks), **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
