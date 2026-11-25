@@ -54,7 +54,7 @@ def main():
                         break
                     time.sleep(0.05)
                 assert len(roots) >= 10, "Missing userland request spans"
-            # Server.__exit__ sends SIGTERM and waits for graceful shutdown.
+            # Server.__exit__ sends SIGTERM and waits for process exit; no drain proof.
         rows = records(root / "server.log")
         perf = [r for r in rows if r.get("schema") == "ores-core-perf.v1"]
         debug = [r for r in rows if r.get("schema") == "ores-core-debug.v1"]

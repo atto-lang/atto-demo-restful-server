@@ -1,3 +1,9 @@
+# Historical dependency upgrade record (superseded candidate)
+
+This October record is retained for provenance. The newer #2 runtime candidate uses its own tested November compiler and submodule pins; this record does not change them. The revision-addressed compiler cache, dependency guard, clean build and pre-fetch checks were carried into #2. The older Python-only regression files and static workflow are superseded by the shell regression `scripts/test-dependency-checker.sh` and existing source/route guard workflows. The test-only launcher override is not carried forward: the private-runner procedure reconstructs the pinned Git checkouts and uses the normal guarded launcher, or a built native binary. The current integration candidate must be revalidated after reconciliation with main; historical evidence is not a fresh guest run.
+
+---
+
 # Dependency update — 2026-10-11
 
 This is a reproducible **merged-main** dependency refresh of the RESTful demo.

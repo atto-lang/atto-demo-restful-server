@@ -1,13 +1,40 @@
-# Oreslang demo RESTful server
+# AttoLang demo RESTful server
+
+This imports the executable legacy Oreslang implementation into
+`atto-lang/atto-demo-restful-server`, preserving both Git histories. The destination
+scope document is retained in [docs/DESTINATION_SCOPE.md](docs/DESTINATION_SCOPE.md).
+Existing `.ores`, `ORES_*` variables, Java package names and wire telemetry schemas
+remain compatibility interfaces. See [the migration checkpoint](docs/REST_RUNTIME_CHECKPOINT_2026-11-10.md)
+for exact pins, executed evidence and compiler blockers.
 
 A real HTTP/1.1 server on **127.0.0.1:3000**, built with Oreslang Spin and the native
 HTTP runtime. Every matched request gets a fresh actor. Read handlers use shared
 actors; mutation handlers use isolated actors that exclusively claim the moved
 HTTP exchange.
 
+## Canonical-language compatibility boundary
+
+This PR preserves an executable **legacy Oreslang** demo as migration input, not a completed canonical AttoLang `.atto` implementation. Its checked-in `.ores` sources and Python build/test helpers are migration blockers; no AttoLang native-guest parity or production release is implied. Keep this PR draft until a separate audited `.atto` guest port, Rust supporting tests, and compiler-backed execution evidence are available.
+
+## Naming migration and language authority
+
+This repository is maintained at [atto-lang/atto-demo-restful-server](https://github.com/atto-lang/atto-demo-restful-server); use `https://github.com/atto-lang/atto-demo-restful-server.git` for Git remotes and canonical `.atto` source examples. The normative language contract is [atto-spec](https://github.com/atto-lang/atto-spec), with executable guest evidence tracked by [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance). Follow current ownership, borrowing, effects, actor, and syntax rules there; do not infer implemented features from a README or unexecuted CI.
+
+## Repository ownership and contribution routing
+
+**Belongs here:** Runnable reference REST server and actor-backed HTTP request/response examples, routes, fixtures and deployment notes.
+
+**Belongs elsewhere:** Reusable routing semantics in atto-http-routing, generic API app scaffold in atto-api-server.atto and performance data in atto-restful-server-perf-benchmarks.
+
+**Security and portability boundary:** Bind host and ports explicitly, validate requests and cancellation, bound response sizes, and document security settings before internet exposure.
+
+AttoLang is the canonical project name; new source, examples and documentation use `.atto` and the `atto-lang` repository organization. This README defines scope, not feature readiness.
+
+**Acceptance:** name exact source SHA/tree, runtime/toolchain, positive and negative checks and execution receipt before claiming support. Host-only tests and empty CI steps do not prove guest execution.
+
 ## Run
 
-Prerequisites: **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
+Prerequisites: **Bash 5** (for source-policy checks), **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
 Oreslang dependencies. Set `JAVA_HOME` to your JDK 25 installation. The startup
 script uses its Java binary, or `ORES_JAVA` if explicitly set.
 
@@ -28,14 +55,9 @@ replaces and finally deletes the demo resource; use it against a demo instance.
 Stop the server with Ctrl-C.
 
 An existing clean compiler checkout can be reused with `ORESLANG_SOURCE_DIR` if
-its commit matches `SOURCE_REF`. Otherwise setup uses the commit-addressed
-`.cache/compiler-<SOURCE_REF>` checkout, preserving older compiler checkouts.
-Spin, routing and oreslang-otel are pinned Git submodules. Setup refuses to
-reset an existing compiler checkout. Build/run entrypoints now reject dirty
-compiler or recursively dirty dependency trees, and fail closed on Git errors.
-See
-[the dependency upgrade record](docs/DEPENDENCY_UPGRADE_2026-10-11.md)
-for exact revisions and validation limitations.
+its commit matches `SOURCE_REF`. Otherwise setup clones and builds that exact
+revision under `.cache/`. Spin, routing and oreslang-otel are pinned Git submodules. Setup
+refuses to reset an existing compiler checkout.
 
 Optional settings:
 
@@ -116,14 +138,18 @@ state, not OS-process isolation. The JVM transport retains the socket/FD.
 
 ## Validation
 
-`./scripts/test.sh` runs the original 31 real-HTTP and route-generation checks plus an opt-in core/userland diagnostic integration check: the 10-request
+`./scripts/test.sh` runs 44 real-HTTP and route-generation checks plus the core/userland diagnostic integration check: the 10-request
 curl sequence, error responses, HEAD/OPTIONS, persistence across a server restart,
-path mapping, unsupported method files and symlink rejection. The previous Spin
-revision had passed its 55 HTTP assertions and routing golden suite; the newly
-pinned dependency combination has not yet been exercised end-to-end.
-The previous compiler pin was exercised using JDK 25 interpreter mode.
-The new dependency pins require a fresh JDK 25 full integration run; native-image/
-optimizing-Graal performance is not established by the upgrade alone.
+path mapping, unsupported method files, symlink rejection, three capacity-503 responses
+while a real guest upload is suspended, deadline expiry, disconnect recovery, and
+SIGTERM during an admitted upload. Set `REST_TEST_LOG_DIR` to retain server logs.
+On this pin a busy body read expires at ten seconds with HTTP 500, not 504.
+The signal test verifies process/listener exit and unchanged storage; it does not
+prove graceful draining or serial HTTP actor lowering. Spin routing golden output and 110 real-HTTP assertions passed with the
+compatibility backport; its original compiler pin failed duplicate-Host rejection.
+The REST suite also checks six malformed-header rejections before guest admission.
+Validation used JDK 25 interpreter mode; native-image/optimizing-Graal performance
+was not measured for this demo.
 
 ## Native AOT-only and hybrid builds
 
@@ -172,10 +198,8 @@ tools, a required native carrier library, mode enforcement, and HTTP persistence
 python3 tests/native_distribution.py dist/rest-server-aot-darwin-arm64.tar.gz
 ```
 
-Before this pin refresh, macOS ARM64 AOT-only and hybrid archives were
-built and tested locally. Those results do not validate the newly pinned Java
-and Spin revisions. Linux packaging paths have not been validated by those
-macOS results. These
+macOS ARM64 AOT-only and hybrid archives were built and tested locally. Linux
+packaging paths are supplied but not validated by these macOS results. These
 executables depend on OS system libraries and the bundled carrier library; they
 are not fully static, signed/notarized application releases. Native Image does
 not alter the demo's single-admission file-store constraints.
@@ -288,9 +312,8 @@ these measurements.
 
 ## Core runtime performance diagnostics (experimental compiler pin)
 
-The compiler pin now targets a merged Java/GraalVM `main` snapshot in
-`SOURCE_REF` (rather than the historical diagnostic PR
-[oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451)).
+The compiler pin includes the diagnostic implementation originally developed in
+[oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451).
 This is **core runtime diagnostics**, not userland `oreslang-otel`.
 
 ```sh
@@ -314,11 +337,11 @@ To capture both low-level timings and guarded core events, use
 `./scripts/run-server.sh --core-perf --core-debug`. Core debug emits
 `ores-core-debug.v1` JSONL at shutdown; `ORES_CORE_DEBUG=true` also enables
 it and `--no-core-debug` overrides that environment setting.
-The new pinned source and submodule combination must pass exact-commit
-integration testing before new benchmark results should be treated as verified.
+The compiler is an immutable compatibility pin from merged history. The checkpoint
+records application validation; no current throughput benchmark is claimed.
 
 The automated diagnostic check uses the normal ten-request script, waits for
-the userland request spans, gracefully terminates the server and verifies that
+the userland request spans, sends SIGTERM to the server and verifies that
 both core JSONL schemas were exported at shutdown, including fixed-name HTTP
 phase timings and numeric debug events. It also checks that core records
 contain no request path, body or trace ID:
@@ -346,7 +369,7 @@ result and stop the server. Then restart terminal 1 with:
 ./scripts/run-server.sh --core-perf --core-debug 2>&1 | tee .cache/core-on.log
 ```
 
-Repeat the same benchmark workload and stop the server gracefully to export
+Repeat the same benchmark workload and stop the server to export
 the bounded core capture. To inspect the two independent timing namespaces:
 
 ```sh
