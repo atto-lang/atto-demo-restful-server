@@ -46,3 +46,9 @@ AttoLang is the canonical project name; new source, examples and documentation u
 The legacy Oreslang REST demonstration has moved into the AttoLang repository namespace. This is a successor repository, not proof of a same-ID GitHub transfer. Preserve the working legacy `.ores` sources and exact compiler/dependency pins until their replacements have executed successfully. The language and reference examples belong in `atto-lang`; production multi-tenant cloud infrastructure, registry, identity and billing belong in `atto-co`.
 
 For a release, record the demo commit/tree, compiler and nested dependency revisions, toolchain, executed test steps and positive/negative results. Source-only route checks do not establish native HTTP actor execution, and a zero-step Actions job is not executed evidence. Validate real HTTP behavior and the applicable native distribution modes before claiming runtime support. Never publish private dependency source in a public repository.
+
+## Rust route generation and native release checks
+
+The legacy pinned REST app uses the Rust route publisher through `bash scripts/generate-routes.sh` (Cargo required). The retained Python generator is a host-only parity oracle, not a production route-generation dependency. See [route generator contracts](docs/RUST_ROUTE_GENERATOR.md) for filesystem trust boundaries, exact-byte parity, and remaining limitations.
+
+Run the dependency-free publisher tests with `cargo test --offline --locked --manifest-path tools/route-gen/Cargo.toml`. With the authorized exact compiler and GraalVM Native Image SDK, run `bash scripts/verify-native-release.sh aot` or `bash scripts/verify-native-release.sh hybrid`. These commands require a real server executable and exercise HTTP, telemetry, shutdown and persistence. A native host running interpreted guest handlers is not proof of full guest AOT or other backend parity.
