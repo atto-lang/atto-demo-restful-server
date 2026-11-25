@@ -38,7 +38,8 @@ define isoactor Handler as
       // Bound the existing representation before reading it into actor state.
       val Future<int> pending_size_2 = store.size();
       val int current_bytes = await pending_size_2;
-      if current_bytes > store.max_resource_bytes(); then
+      val int quota_limit_1 = store.max_resource_bytes();
+      if current_bytes > quota_limit_1; then
         await request.respond(413, "text/plain", "existing resource exceeds persisted byte quota");
         telemetry_status = 413;
         self.end();
@@ -60,7 +61,8 @@ define isoactor Handler as
       val Future<void> pending_clear_stage_6 = store.clear_stage();
       await pending_clear_stage_6;
       stage_owned = false;
-      if updated_bytes > store.max_resource_bytes(); then
+      val int quota_limit_2 = store.max_resource_bytes();
+      if updated_bytes > quota_limit_2; then
         await request.respond(413, "text/plain", "resource exceeds persisted byte quota");
         telemetry_status = 413;
         self.end();

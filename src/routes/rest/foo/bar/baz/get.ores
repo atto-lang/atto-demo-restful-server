@@ -19,7 +19,8 @@ define actor Handler as
         // out-of-band writers can mutate the file concurrently.
         val Future<int> pending_size_1 = store.size();
         val int persisted_bytes = await pending_size_1;
-        if persisted_bytes > store.max_resource_bytes(); then
+        val int quota_limit_1 = store.max_resource_bytes();
+        if persisted_bytes > quota_limit_1; then
           await request.respond(500, "text/plain",
                                 "stored resource exceeds persisted byte quota");
           telemetry_status = 500;

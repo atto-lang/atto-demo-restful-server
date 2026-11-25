@@ -34,7 +34,8 @@ define isoactor Handler as
       val Future<void> pending_clear_stage_3 = store.clear_stage();
       await pending_clear_stage_3;
       stage_owned = false;
-      if body_bytes > store.max_resource_bytes(); then
+      val int quota_limit_1 = store.max_resource_bytes();
+      if body_bytes > quota_limit_1; then
         await request.respond(413, "text/plain", "resource exceeds persisted byte quota");
         telemetry_status = 413;
         self.end();
