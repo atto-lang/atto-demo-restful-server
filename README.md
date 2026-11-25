@@ -40,3 +40,9 @@ These examples are intended to demonstrate AttoLang concepts. Examples may depen
 AttoLang is the canonical project name; new source, examples and documentation use `.atto` and the `atto-lang` repository organization. This README defines scope, not feature readiness.
 
 **Acceptance:** name exact source SHA/tree, runtime/toolchain, positive and negative checks and execution receipt before claiming support. Host-only tests and empty CI steps do not prove guest execution.
+
+## Migration and release evidence
+
+The legacy Oreslang REST demonstration has moved into the AttoLang repository namespace. This is a successor repository, not proof of a same-ID GitHub transfer. Preserve the working legacy `.ores` sources and exact compiler/dependency pins until their replacements have executed successfully. The language and reference examples belong in `atto-lang`; production multi-tenant cloud infrastructure, registry, identity and billing belong in `atto-co`.
+
+For a release, record the demo commit/tree, compiler and nested dependency revisions, toolchain, executed test steps and positive/negative results. Source-only route checks do not establish native HTTP actor execution, and a zero-step Actions job is not executed evidence. Validate real HTTP behavior and the applicable native distribution modes before claiming runtime support. Never publish private dependency source in a public repository.
