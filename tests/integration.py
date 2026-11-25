@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import tempfile
 import time
@@ -19,7 +20,7 @@ def request(port, method, path, body=None, headers=None):
         try:
             connection.request(method, path, body=body, headers=headers or {})
             response = connection.getresponse()
-            result = response.status, response.read(), dict(response.getheaders())
+            result = response.status, response.read(), response.headers
         finally:
             connection.close()
         if result[0] != 503:
@@ -28,20 +29,20 @@ def request(port, method, path, body=None, headers=None):
     raise AssertionError("server admission did not recover")
 
 def request_chunked(port, method, path, chunks):
-    """Send chunked HTTP/1.1 without a Content-Length header."""
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=12)
-    try:
-        connection.request(
-            method,
-            path,
-            body=iter(chunks),
-            headers={"Content-Type": "text/plain"},
-            encode_chunked=True,
-        )
-        response = connection.getresponse()
-        return response.status, response.read(), dict(response.getheaders())
-    finally:
-        connection.close()
+    """Send a repeatable chunked body without Content-Length; retry admission only."""
+    for _ in range(50):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=12)
+        try:
+            connection.request(method, path, body=iter(chunks),
+                               headers={"Content-Type": "text/plain"}, encode_chunked=True)
+            response = connection.getresponse()
+            result = response.status, response.read(), response.headers
+        finally:
+            connection.close()
+        if result[0] != 503:
+            return result
+        time.sleep(0.02)
+    raise AssertionError("server admission did not recover for chunked body")
 
 
 class Server:
@@ -86,9 +87,122 @@ class Server:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=3)
+        self.exit_status = self.process.returncode
+        self.log.flush()
+        if os.environ.get("REST_TEST_LOG_DIR"):
+            destination = Path(os.environ["REST_TEST_LOG_DIR"])
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.log.name, destination / f"server-{self.process.pid}-{self.port}.log")
         self.log.close()
     def __exit__(self, *_):
         self.stop()
+
+def held_upload(server):
+    """Wait for guest claim, retrying only an explicit admission rejection."""
+    for attempt in range(50):
+        server.log.seek(0)
+        before = server.log.read().count('actor.claim mode=isolated method=PUT')
+        peer = socket.create_connection(('127.0.0.1', server.port), timeout=15)
+        peer.sendall(b'PUT /foo/bar/baz HTTP/1.1\r\nHost: localhost\r\n'
+                     b'Content-Type: text/plain\r\nContent-Length: 4\r\n'
+                     b'Connection: close\r\n\r\nx')
+        try:
+            peer.settimeout(.025)
+            for _ in range(200):
+                server.log.seek(0)
+                if server.log.read().count('actor.claim mode=isolated method=PUT') > before:
+                    peer.settimeout(15)
+                    return peer
+                assert server.process.poll() is None, 'server exited before guest claim'
+                try:
+                    data = peer.recv(4096, socket.MSG_PEEK)
+                except socket.timeout:
+                    continue
+                assert data.startswith(b'HTTP/1.1 503'), data
+                peer.close()
+                time.sleep(.025)
+                break
+            else:
+                raise AssertionError('partial upload never reached guest handler')
+        except BaseException:
+            peer.close()
+            raise
+    raise AssertionError('upload admission did not recover')
+
+
+def transport_checks(directory):
+    checks = 0
+    resource = directory / 'data/baz.txt'
+    saved = resource.read_bytes()
+    with Server(directory) as server:
+        # Malformed headers must be rejected before any guest exchange is admitted.
+        for headers in (
+            b'Host: localhost\r\nHost: other.test\r\n',
+            b'Host: localhost\r\nhOsT: other.test\r\n',
+            b'Host: \r\n', b'', b'Host: localhost, other.test\r\n',
+            b'Host: localhost\r\nX-Large: ' + b'x' * 12000 + b'\r\n',
+        ):
+            with socket.create_connection(('127.0.0.1', server.port), timeout=3) as peer:
+                peer.sendall(b'GET /health HTTP/1.1\r\n' + headers + b'Connection: close\r\n\r\n')
+                response = http.client.HTTPResponse(peer)
+                response.begin()
+                response.read()
+                assert response.status == 400, response.status
+                assert response.getheader('X-Ores-Trace-Id') is None
+                checks += 1
+        print('PASS: 6 malformed header requests rejected before guest admission')
+        # Hold the only admission while three independent connections arrive.
+        started = time.monotonic()
+        with held_upload(server) as peer:
+            for _ in range(3):
+                connection = http.client.HTTPConnection('127.0.0.1', server.port, timeout=3)
+                try:
+                    connection.request('GET', '/health')
+                    response = connection.getresponse()
+                    assert response.status == 503, response.status
+                    assert response.getheader('X-Ores-Trace-Id') is None
+                    response.read()
+                finally:
+                    connection.close()
+                checks += 1
+            response = http.client.HTTPResponse(peer)
+            response.begin()
+            response.read()
+            elapsed = time.monotonic() - started
+            # This pin aborts a busy body read with 500 at the 10s deadline.
+            # A promised 504 response would overstate its actual contract.
+            assert response.status == 500, response.status
+            assert 8 <= elapsed < 14.5, elapsed
+            print(f'PASS: held upload deadline status={response.status} elapsed={elapsed:.3f}s; excess requests=503')
+            checks += 1
+        assert request(server.port, 'GET', '/health')[:2] == (200, b'{"status":"ok"}')
+        assert resource.read_bytes() == saved, 'timed-out upload mutated persistence'
+        checks += 1
+        peer = held_upload(server)
+        peer.close()
+        assert request(server.port, 'GET', '/health')[:2] == (200, b'{"status":"ok"}')
+        assert resource.read_bytes() == saved, 'disconnected upload mutated persistence'
+        print('PASS: disconnected admitted upload released admission; persistence unchanged')
+        checks += 1
+    # Signals terminate this application; it has no signal-to-server.drain bridge.
+    with Server(directory) as server:
+        with held_upload(server) as peer:
+            started = time.monotonic()
+            server.process.terminate()
+            server.process.wait(timeout=8)
+            elapsed = time.monotonic() - started
+            try:
+                result = peer.recv(4096)
+            except ConnectionResetError:
+                result = b''
+            assert not result.startswith(b'HTTP/1.1 2'), result
+            assert resource.read_bytes() == saved
+            print(f'PASS: SIGTERM during upload exited={server.process.returncode} elapsed={elapsed:.3f}s; graceful draining NOT_VERIFIED')
+            checks += 1
+    with socket.socket() as connection:
+        assert connection.connect_ex(('127.0.0.1', server.port)) != 0, 'listener survived process exit'
+    return checks
+
 
 def main():
     checks = 0
@@ -389,6 +503,7 @@ def main():
             checks += 1
         assert (directory / "data/baz.txt").read_text() == "survives restart"
         checks += 1
+        checks += transport_checks(directory)
     # The generator derives paths, rejects invalid method files, and cannot use
     # symlinked route sources to import outside the root.
     spec = importlib.util.spec_from_file_location("route_generator", ROOT / "scripts/generate-routes.py")

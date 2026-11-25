@@ -39,9 +39,17 @@ jobs:
           bash -n scripts/test.sh
           bash -n scripts/lib/guards.sh
           bash -n scripts/test-guards.sh
+          bash -n scripts/check-deps.sh
+          bash -n scripts/test-dependency-checker.sh
+          bash -n scripts/verify-project-root-imports.sh
+          bash -n scripts/test-project-root-probe.sh
           bash -n scripts/read-only-http-transport-smoke.sh
       - name: Check source and submodule trust guards
         run: bash scripts/test-guards.sh
+      - name: Check exact compiler and recursive dependency graph (offline)
+        run: bash scripts/test-dependency-checker.sh
+      - name: Check project-root import acceptance gate (host-only)
+        run: bash scripts/test-project-root-probe.sh
       - name: Check bounded embedded-app extraction
         run: |
           mkdir -p .cache/archive-test
