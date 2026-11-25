@@ -966,3 +966,31 @@ class Wave1609InertRouteMetadata(unittest.TestCase):
         second = (self.root / "src/generated/routes.ores").read_text()
         self.assertIn("HEAD /health", second)
         self.assertEqual(second.count('builder.route("HEAD"'), 1)
+
+
+class Wave2031MissingRouteAncestor(unittest.TestCase):
+    """Missing or aliased routes parent must not touch previous artifacts."""
+    setUp = RoutePublication.setUp
+
+    def test_missing_or_symlinked_ancestor_has_no_publication_side_effects(self):
+        generator.generate(3000, self.root / "original-data")
+        generated = self.root / "src/generated"
+        before = {name: (generated / name).read_bytes()
+                  for name in ("routes.ores", "config.ores")}
+        ancestor = self.root / "src/routes"
+        outside = self.root / "external-routes"
+        ancestor.rename(outside)
+        for alias in (False, True):
+            if alias:
+                ancestor.symlink_to(outside, target_is_directory=True)
+            denied = self.root / ("alias-data" if alias else "missing-data")
+            with self.assertRaisesRegex(ValueError, "routes ancestor must be a real directory"):
+                generator.generate(3001, denied)
+            self.assertFalse(denied.exists())
+            self.assertEqual({name: (generated / name).read_bytes()
+                              for name in before}, before)
+            self.assertEqual(list(generated.glob(".routes-*")), [])
+        ancestor.unlink()
+        outside.rename(ancestor)
+        generator.generate(3002, self.root / "recovered-data")
+        self.assertIn("return 3002;", (generated / "config.ores").read_text())
