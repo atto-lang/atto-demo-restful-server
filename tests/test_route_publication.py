@@ -623,6 +623,33 @@ class Wave46DanglingGeneratedSymlink(unittest.TestCase):
         self.assertIn('return 3000;', (generated / 'config.ores').read_text())
 
 
+class RouteWave22EscapedConfigAndNestedPaths(unittest.TestCase):
+    """Source-owned host generator tests; not guest compiler evidence."""
+    setUp = RoutePublication.setUp
+
+    def test_quoted_backslash_and_newline_data_path_is_json_escaped(self):
+        import json
+        data_dir = self.root / 'data"quote\\backslash\nnext'
+        generator.generate(3000, data_dir)
+        config = (self.root / 'src/generated/config.ores').read_text()
+        literal = json.dumps(str(data_dir.resolve() / 'baz.txt'))
+        self.assertIn('return ' + literal + ';', config)
+        self.assertEqual(config.count('pub fnc data_path()'), 1)
+
+    def test_nested_safe_route_uses_literal_segments_and_relative_import(self):
+        folder = self.root / 'src/routes/rest/team_2/record-7'
+        folder.mkdir(parents=True)
+        (folder / 'head.ores').write_text('fixture')
+        generator.generate(3000, self.root / 'data')
+        source = (self.root / 'src/generated/routes.ores').read_text()
+        self.assertIn('HEAD /team_2/record-7', source)
+        self.assertIn('http_routing.literal("team_2")', source)
+        self.assertIn('http_routing.literal("record-7")', source)
+        self.assertIn('from "../routes/rest/team_2/record-7/head";', source)
+
+
+
+
 if __name__=='__main__':
     unittest.main()
 
@@ -697,3 +724,273 @@ class Wave3011SymlinkedSourceAncestor(unittest.TestCase):
             self.assertEqual((real_source / 'generated' / name).read_bytes(), expected)
         self.assertFalse((self.root / 'blocked-data').exists())
         self.assertEqual(list((real_source / 'generated').glob('.routes-*')), [])
+
+
+class Wave2031RouteAncestorBoundary(unittest.TestCase):
+    """Host publication: route ancestor aliases cannot import an outside tree."""
+    setUp = RoutePublication.setUp
+
+    def test_symlinked_routes_parent_preserves_existing_generated_sources(self):
+        generator.generate(3000, self.root / 'data')
+        published = self.root / 'src/generated'
+        previous = {p: (published / p).read_bytes() for p in ('routes.ores', 'config.ores')}
+        ancestor = self.root / 'src/routes'
+        outside = self.root / 'outside-routes'
+        ancestor.rename(outside)
+        ancestor.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'routes ancestor must be a real directory'):
+            generator.generate(3001, self.root / 'data')
+        for name, expected in previous.items():
+            self.assertEqual((published / name).read_bytes(), expected)
+
+    def test_restoration_after_rejected_ancestor_uses_only_reviewed_routes(self):
+        ancestor = self.root / 'src/routes'
+        outside = self.root / 'outside-routes'
+        ancestor.rename(outside)
+        ancestor.symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            generator.generate(3000, self.root / 'data')
+        ancestor.unlink()
+        outside.rename(ancestor)
+        generator.generate(3001, self.root / 'data')
+        self.assertIn('GET /health', (self.root / 'src/generated/routes.ores').read_text())
+        self.assertIn('return 3001;', (self.root / 'src/generated/config.ores').read_text())
+
+
+class Wave2053RouteTrustAndHandlerIdentity(unittest.TestCase):
+    """Real route-source generator; host evidence only, not HTTP guest execution."""
+    setUp = RoutePublication.setUp
+
+    def test_nested_method_imports_match_exact_handler_and_route_indices(self):
+        route_root = self.root / 'src/routes/rest'
+        nested = route_root / 'alpha/v1'
+        nested.mkdir(parents=True)
+        for name in ('get.ores', 'post.ores', 'put.ores'):
+            (nested / name).write_text('source fixture')
+        generator.generate(3000, self.root / 'data')
+        source = (self.root / 'src/generated/routes.ores').read_text()
+        entries = generator.discover(route_root)
+        self.assertEqual(source.count('import module route as route_'), len(entries))
+        self.assertEqual(source.count('    builder.route('), len(entries))
+        for index, (method, parts, handler) in enumerate(entries):
+            relative = handler.relative_to(self.root / 'src').with_suffix('').as_posix()
+            url = '/' + '/'.join(parts)
+            with self.subTest(method=method, url=url, handler=str(handler)):
+                self.assertIn(
+                    f'import module route as route_{index} from "../{relative}";',
+                    source,
+                )
+                self.assertIn(
+                    f'builder.route("{method}", rt borrow path_{index}, '
+                    f'route_{index}.handler(), 0, 0, "{method} {url}")',
+                    source,
+                )
+
+    def test_nonroute_symlink_is_a_trust_violation_even_if_extension_is_ignored(self):
+        generator.generate(3000, self.root / 'safe-data')
+        generated = self.root / 'src/generated'
+        previous = {name: (generated / name).read_bytes()
+                    for name in ('routes.ores', 'config.ores')}
+        external = self.root / 'external-metadata.txt'
+        external.write_text('do not import')
+        alias = self.root / 'src/routes/rest/health/unreviewed.txt'
+        try:
+            alias.symlink_to(external)
+        except (OSError, NotImplementedError):
+            self.skipTest('symlinks unavailable on this filesystem')
+        with self.assertRaisesRegex(ValueError, 'route must remain under route root'):
+            generator.generate(3001, self.root / 'blocked-data')
+        self.assertEqual(
+            {name: (generated / name).read_bytes() for name in previous}, previous)
+        self.assertEqual(external.read_text(), 'do not import')
+        self.assertFalse((self.root / 'blocked-data').exists())
+
+class Wave2032SpecialRouteFileAdmission(unittest.TestCase):
+    """Host generator must not read special source nodes or damage good outputs."""
+
+    setUp = RoutePublication.setUp
+
+    def test_fifo_ores_path_denied_before_publication_then_valid_recovery(self):
+        import os
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("POSIX FIFO support required")
+
+        generator.generate(3210, self.root / "before-data")
+        published = self.root / "src/generated"
+        previous = {name: (published / name).read_bytes()
+                    for name in ("routes.ores", "config.ores")}
+        fifo = self.root / "src/routes/rest/health/post.ores"
+        try:
+            os.mkfifo(fifo)
+        except (OSError, NotImplementedError):
+            self.skipTest("filesystem cannot create FIFO nodes")
+        with self.assertRaisesRegex(ValueError, "regular source file"):
+            generator.generate(3211, self.root / "rejected-data")
+        for name, expected in previous.items():
+            self.assertEqual((published / name).read_bytes(), expected)
+        self.assertFalse((self.root / "rejected-data").exists())
+        self.assertEqual(list(published.glob(".routes-*")), [])
+
+        fifo.unlink()
+        fifo.write_text("valid POST fixture", encoding="utf-8")
+        generator.generate(3211, self.root / "recovered-data")
+        self.assertIn("POST /health", (published / "routes.ores").read_text())
+        self.assertIn("return 3211;", (published / "config.ores").read_text())
+
+class Wave9526ExactPortTypeAdmission(unittest.TestCase):
+    """Host-only generator must reject non-int ports before any filesystem mutation."""
+
+    setUp = RoutePublication.setUp
+
+    def test_port_exact_integer_type_preserves_prior_publication_and_recovers(self):
+        class IntSubclass(int):
+            pass
+
+        generator.generate(3000, self.root / "original-data")
+        generated = self.root / "src/generated"
+        prior = {name: (generated / name).read_bytes()
+                 for name in ("routes.ores", "config.ores")}
+        invalid_ports = [False, True, 3000.0, "3000", IntSubclass(3000), None]
+        for index, bad in enumerate(invalid_ports):
+            with self.subTest(port=repr(bad), type=type(bad).__name__):
+                denied = self.root / f"denied-port-{index}"
+                with self.assertRaisesRegex(ValueError, "port must be in"):
+                    generator.generate(bad, denied)
+                self.assertFalse(denied.exists())
+                self.assertEqual(
+                    {name: (generated / name).read_bytes() for name in prior}, prior)
+                self.assertEqual(list(generated.glob(".routes-*")), [])
+
+        generator.generate(65535, self.root / "valid-recovery")
+        self.assertIn("return 65535;", (generated / "config.ores").read_text())
+        self.assertIn("GET /health", (generated / "routes.ores").read_text())
+
+class Wave9861JsonPathLiteral(unittest.TestCase):
+    """Host generator must serialize a hostile filesystem path as one literal."""
+    setUp = RoutePublication.setUp
+
+    def test_quoted_unicode_backslash_and_newline_path_publishes_safely(self):
+        import json
+        folder = self.root / 'data "quoted"\\literal 🥑\nnext'
+        generator.generate(4444, folder)
+        config_file = self.root / "src/generated/config.ores"
+        routes_file = self.root / "src/generated/routes.ores"
+        config = config_file.read_text()
+        routes = routes_file.read_text()
+        expected = json.dumps(str(folder.resolve() / "baz.txt"))
+        self.assertIn("return " + expected + ";", config)
+        self.assertIn("pub fnc port(): int { return 4444; }", config)
+        self.assertEqual(config.count("pub fnc data_path()"), 1)
+        self.assertEqual(config.count("define module config as"), 1)
+        self.assertIn("GET /health", routes)
+        self.assertNotIn("\nnext/baz.txt", config)
+        self.assertTrue(folder.is_dir())
+        before = (config_file.read_bytes(), routes_file.read_bytes())
+        generator.generate(4444, folder)
+        self.assertEqual(
+            (config_file.read_bytes(), routes_file.read_bytes()), before)
+
+
+class Wave1609AtomicPublicationNodes(unittest.TestCase):
+    """Host-only publish() tests for special-node and inode replacement safety."""
+
+    setUp = RoutePublication.setUp
+
+    def test_stale_fifo_output_is_replaced_without_reading_pipe(self):
+        import os
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("POSIX FIFO support required")
+        generated = self.root / "src/generated"
+        generated.mkdir()
+        destination = generated / "routes.ores"
+        try:
+            os.mkfifo(destination)
+        except (OSError, NotImplementedError):
+            self.skipTest("filesystem does not support FIFO nodes")
+
+        generator.publish(destination, "define module safe as\\nend\\n")
+        self.assertTrue(destination.is_file())
+        self.assertEqual(destination.read_text(), "define module safe as\\nend\\n")
+        self.assertEqual(list(generated.glob(".routes-*")), [])
+
+    def test_hardlinked_stale_output_detaches_without_modifying_source(self):
+        import os
+        generated = self.root / "src/generated"
+        generated.mkdir()
+        destination = generated / "config.ores"
+        source = self.root / "protected-source.ores"
+        source.write_text("old protected bytes\\n", encoding="utf-8")
+        try:
+            os.link(source, destination)
+        except (OSError, NotImplementedError):
+            self.skipTest("filesystem does not support hardlinks")
+
+        generator.publish(destination, "new generated bytes\\n")
+        self.assertEqual(source.read_text(), "old protected bytes\\n")
+        self.assertEqual(destination.read_text(), "new generated bytes\\n")
+        self.assertNotEqual(source.stat().st_ino, destination.stat().st_ino)
+        self.assertEqual(list(generated.glob(".routes-*")), [])
+
+
+class Wave1609InertRouteMetadata(unittest.TestCase):
+    """Non-source files cannot alter the generated route table or imports."""
+
+    setUp = RoutePublication.setUp
+
+    def test_benign_route_metadata_is_not_imported_or_published(self):
+        generator.generate(3000, self.root / "same-data")
+        generated = self.root / "src/generated"
+        previous = {name: (generated / name).read_bytes()
+                    for name in ("routes.ores", "config.ores")}
+        health = self.root / "src/routes/rest/health"
+        (health / "README.md").write_text("not source", encoding="utf-8")
+        (health / "route.json").write_text('{"fake":"POST /health"}', encoding="utf-8")
+        (health / "get.ORES").write_text("case-shifted non-source", encoding="utf-8")
+        generator.generate(3000, self.root / "same-data")
+        self.assertEqual(
+            {name: (generated / name).read_bytes() for name in previous}, previous)
+        source = (generated / "routes.ores").read_text()
+        self.assertEqual(source.count('builder.route("GET"'), 1)
+        self.assertNotIn("README.md", source)
+        self.assertNotIn("route.json", source)
+        self.assertNotIn("get.ORES", source)
+
+    def test_only_reviewed_lowercase_ores_extension_registers_new_handler(self):
+        health = self.root / "src/routes/rest/health"
+        (health / "head.ORES").write_text("not a handler", encoding="utf-8")
+        generator.generate(3000, self.root / "same-data")
+        first = (self.root / "src/generated/routes.ores").read_text()
+        self.assertNotIn("HEAD /health", first)
+        (health / "head.ores").write_text("reviewed HEAD handler", encoding="utf-8")
+        generator.generate(3000, self.root / "same-data")
+        second = (self.root / "src/generated/routes.ores").read_text()
+        self.assertIn("HEAD /health", second)
+        self.assertEqual(second.count('builder.route("HEAD"'), 1)
+
+
+class Wave2031MissingRouteAncestor(unittest.TestCase):
+    """Missing or aliased routes parent must not touch previous artifacts."""
+    setUp = RoutePublication.setUp
+
+    def test_missing_or_symlinked_ancestor_has_no_publication_side_effects(self):
+        generator.generate(3000, self.root / "original-data")
+        generated = self.root / "src/generated"
+        before = {name: (generated / name).read_bytes()
+                  for name in ("routes.ores", "config.ores")}
+        ancestor = self.root / "src/routes"
+        outside = self.root / "external-routes"
+        ancestor.rename(outside)
+        for alias in (False, True):
+            if alias:
+                ancestor.symlink_to(outside, target_is_directory=True)
+            denied = self.root / ("alias-data" if alias else "missing-data")
+            with self.assertRaisesRegex(ValueError, "routes ancestor must be a real directory"):
+                generator.generate(3001, denied)
+            self.assertFalse(denied.exists())
+            self.assertEqual({name: (generated / name).read_bytes()
+                              for name in before}, before)
+            self.assertEqual(list(generated.glob(".routes-*")), [])
+        ancestor.unlink()
+        outside.rename(ancestor)
+        generator.generate(3002, self.root / "recovered-data")
+        self.assertIn("return 3002;", (generated / "config.ores").read_text())
