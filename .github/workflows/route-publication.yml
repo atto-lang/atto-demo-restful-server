@@ -43,6 +43,8 @@ jobs:
         run: bash scripts/test-guards.sh
       - name: Check exact compiler and recursive dependency graph (offline)
         run: bash scripts/test-dependency-checker.sh
+      - name: Check project-root import acceptance gate (host-only)
+        run: bash scripts/test-project-root-probe.sh
       - name: Check bounded embedded-app extraction
         run: |
           mkdir -p .cache/archive-test
