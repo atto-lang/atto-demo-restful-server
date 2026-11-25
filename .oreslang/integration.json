@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "protocol": "oreslang-ecosystem-integration",
-  "repository": "ores-truffle-oreslang/oreslang-demo-restful-server",
+  "repository": "atto-lang/atto-demo-restful-server",
   "role": "application",
   "upstreams": [
     "oreslang-source.java",
