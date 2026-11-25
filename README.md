@@ -52,3 +52,7 @@ For a release, record the demo commit/tree, compiler and nested dependency revis
 The legacy pinned REST app uses the Rust route publisher through `bash scripts/generate-routes.sh` (Cargo required). The retained Python generator is a host-only parity oracle, not a production route-generation dependency. See [route generator contracts](docs/RUST_ROUTE_GENERATOR.md) for filesystem trust boundaries, exact-byte parity, and remaining limitations.
 
 Run the dependency-free publisher tests with `cargo test --offline --locked --manifest-path tools/route-gen/Cargo.toml`. With the authorized exact compiler and GraalVM Native Image SDK, run `bash scripts/verify-native-release.sh aot` or `bash scripts/verify-native-release.sh hybrid`. These commands require a real server executable and exercise HTTP, telemetry, shutdown and persistence. A native host running interpreted guest handlers is not proof of full guest AOT or other backend parity.
+
+## Rust REST benchmark
+
+Run `BASE_URL=http://127.0.0.1:3000 bash scripts/benchmark.sh --runs 6` only against a disposable local server/data directory: this benchmark writes and deletes the demo resource. Numeric loopback only, direct HTTP without proxy or curl configuration. Host timing tests do not certify guest AOT or runtime parity.
