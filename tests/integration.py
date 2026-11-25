@@ -145,6 +145,24 @@ def main():
             assert status == 413, (status, payload)
             assert resource.read_bytes() == over_quota
             assert not (directory / "data/.baz.quota-stage.txt").exists()
+            checks += 1
+
+            # GET must also reject an out-of-band oversized resource before
+            # materializing its text. Server-side persistence corruption is
+            # a 500, not an oversized incoming request (413).
+            status, payload, _ = request(server.port, "GET", "/foo/bar/baz")
+            assert status == 500, (status, payload)
+            assert b"stored resource exceeds persisted byte quota" in payload
+            assert resource.read_bytes() == over_quota
+            checks += 1
+
+            # The exact byte ceiling is still readable; the bounded reader
+            # must not reject a valid 1 MiB UTF-8 ASCII resource.
+            at_limit = b"y" * 1048576
+            resource.write_bytes(at_limit)
+            status, payload, _ = request(server.port, "GET", "/foo/bar/baz")
+            assert status == 200, (status, payload[:100])
+            assert payload == at_limit
             resource.write_bytes(saved_resource)
             checks += 1
 
