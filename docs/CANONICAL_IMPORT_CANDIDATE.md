@@ -1,0 +1,5 @@
+# Canonical import candidate consolidation
+
+The two October candidates differed in library placement and archive implementation. Retain the existing src/lib layout and use +/src/lib/... to avoid moving application modules unnecessarily. Use the stronger package-ores-sources preflight and its regression tests from #11, and the [project] manifest, project-root flag and candidate compiler pin from #12. Generated routes follow the same +/ convention. These are feature-branch changes, not a production migration.
+
+Historical host checks: legacy runs 41002393348 and 39043770223 executed successfully. They do not certify the combined tree or the candidate compiler. The November runtime candidate #2 reproduced a canonical linker failure; preserve relative imports in the released runtime until a current compiler executes the canonical fixture and complete HTTP/native acceptance. Before main, reconcile current source-policy and Rust publisher (no new Python production tooling), archive guards and dependency pins. Do not treat a feature-branch merge as proof of guest linkage.

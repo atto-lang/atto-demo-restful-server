@@ -1,8 +1,9 @@
 schema_version = "1"
 
-[package]
+[project]
 name = "oreslang-demo-restful-server"
 version = "0.1.0"
+root = "."
 
 [source]
 roots = ["src"]
