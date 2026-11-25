@@ -40,32 +40,55 @@ BASE_URL=http://127.0.0.1:3001 ./scripts/curl-10.sh
 ./scripts/test.sh
 ```
 
-## Canonical project-root imports (draft migration)
+## Project-root imports
 
-The canonical `.ores.pkg.toml` at the repository root sets the project root
-for the Oreslang source graph. Shared Oreslang modules now live under
-`lib/`, allowing stable import specifiers from any source depth:
+The `.ores.pkg.toml` in this repository defines the Oreslang package root.
+Local source imports use `+/` relative to that directory, **not** relative
+to each route file and **not** relative to the `[source].roots = ["src"]`
+search root. For example, in `src/routes/rest/foo/bar/baz/delete.ores`:
 
 ```ores
-import module telemetry from "+/lib/telemetry";
-import module store from "+/lib/store";
+import module telemetry from "+/src/lib/telemetry";
+import module store from "+/src/lib/store";
 ```
 
-`+/` always points at the root resolved from the selected project manifest,
-not the current directory or the route source file's parent. Use
-`--project-root=DIR` or `ORES_PROJECT_ROOT` to select an explicit manifest
-directory. Bare dependency imports are separate, and legacy relative imports
-remain valid.
+`+/lib/store` would mean the nonexistent repository-root `lib/`, and
+`+src/lib/store` is intentionally invalid. The route generator also emits
+rooted `+/src/routes/...` imports. `tests/project_root_imports.py`
+checks the source files and generated import paths without launching a
+compiler.
 
-**Important:** This migration is pinned to the candidate Java compiler SHA
-in `SOURCE_REF` (oreslang-source.java PR #1082). It must remain in draft
-until that exact compiler tree and the REST demo pass end-to-end tests, and
-the compiler change is merged/pinned for release. Moving the shared modules
-is not enough on its own; older compilers do not recognize `+/`.
+The native source bundle also verifies that `src/main.ores` and each
+direct, single-line `+/...`, `./...`, or `../...` source import target
+exist in the embedded archive. Missing targets, parent traversal outside the
+archive, and obsolete `@/` syntax fail before replacing an output bundle.
+The demo's native archive has no verified zed-pkg installation or lockfile,
+so `pkg:` imports are rejected at packaging time. Host-absolute paths,
+including Windows drive and UNC paths, are also rejected rather than relying
+on the runtime machine's filesystem. A future package-enabled native build
+must explicitly bundle and verify the locked dependency closure.
 
-Run `python3 tests/project_root_imports.py` for the static layout/import
-contract, then `./scripts/test.sh` for real HTTP execution once JDK 25,
-Maven, dependencies, and GitHub Actions runners are available.
+The source-bundle preflight admits only the demo's single-line import
+declarations. An unrecognized or multiline `import` declaration fails
+closed instead of skipping a dependency check; source compilation remains
+the authority for language syntax and link-time behavior.
+
+Bundle entry names are restricted to portable path components: literal
+backslashes and colons in source filenames are rejected before writing ZIP
+entries. `+/` imports reject empty segments, `.`, and `..` components
+rather than normalizing them, matching the Java resolver's import contract.
+These guards protect the archive's cross-platform identity; they do not
+prove successful compiler execution.
+
+These checks complement rather than replace compiler parsing and linking.
+
+**Compatibility gate:** this branch requires Oreslang compiler support for
+`+/` (proposed in
+[oreslang-source.java #1050](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/1050)).
+The `SOURCE_REF` file currently pins an older compiler and is intentionally
+unchanged. Do not merge or publish native builds from this branch until a
+reviewed, fully tested compiler commit including `+/` is pinned and the
+JDK 25 interpreter/native verification suites pass.
 
 ## File routes
 
@@ -158,13 +181,6 @@ Select the native capability **at build time**:
 ```
 
 The build generates the route registry, embeds the fixed application/import graph,
-and includes the canonical `.ores.pkg.toml` plus root-level `lib/*.ores`
-sources. This is essential for `+/` imports after the native launcher extracts
-the application into a new temporary directory. The archive builder rejects
-symlinked sources/manifest and tests reproducible archive bytes while redacting
-the build-machine-specific generated configuration.
-
-The native package now embeds the fixed application/import graph,
 compiles a native application launcher, and packages the pthread carrier library
 and license notices. It produces `dist/rest-server-aot-<os>-<arch>.tar.gz` (or
 `rest-server-hybrid-...`). Python, Maven, Java, Git and compiler source are build

@@ -1,51 +1,45 @@
 #!/usr/bin/env python3
-"""Structural preflight for the canonical +/ module-import demo.
-
-This checks source layout and spellings. The compiler/HTTP integration suite
-remains necessary for linked execution evidence.
-"""
-from __future__ import annotations
-
+"""Source-only regression checks for canonical +/ Oreslang imports (Python 3.9+)."""
+import importlib.util
 import re
+import shutil
 from pathlib import Path
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PROJECT = ROOT / ".ores.pkg.toml"
-assert PROJECT.is_file(), "missing canonical package manifest"
-contents = PROJECT.read_text(encoding="utf-8")
-assert 'schema_version = "1"' in contents
-assert 'root = "."' in contents
-assert (ROOT / "lib/store.ores").is_file()
-assert (ROOT / "lib/telemetry.ores").is_file()
-assert not (ROOT / "src/lib/store.ores").exists()
-assert not (ROOT / "src/lib/telemetry.ores").exists()
+manifest = ROOT / ".ores.pkg.toml"
+assert manifest.is_file(), "package manifest missing"
+assert 'schema_version = "1"' in manifest.read_text()
+assert 'main = "src/main.ores"' in manifest.read_text()
 
-IMPORT = re.compile(r'import\s+(?:module|fnc|actor|class)\s+\w+\s+from\s+"([^"]+)"\s*;')
-seen_telemetry = seen_store = 0
-for source in [ROOT / "src/main.ores", *(ROOT / "src/routes/rest").rglob("*.ores")]:
-    raw = source.read_text(encoding="utf-8")
-    matches = IMPORT.findall(raw)
-    assert matches, f"{source}: expected import statement"
-    for path in matches:
-        assert not path.startswith("+") or path.startswith("+/"), (
-            f"{source}: noncanonical project-root import {path!r}"
-        )
-        if path.startswith("+/"):
-            assert "/../" not in path and "/./" not in path, (
-                f"{source}: disallowed project-root import segment {path!r}"
-            )
-        if path.endswith("/telemetry"):
-            assert path == "+/lib/telemetry", (source, path)
-            seen_telemetry += 1
-        if path.endswith("/store"):
-            assert path == "+/lib/store", (source, path)
-            seen_store += 1
-assert seen_telemetry >= 7, seen_telemetry
-assert seen_store == 5, seen_store
-assert 'import module config from "+/src/generated/config";' in (
-    ROOT / "lib/store.ores"
-).read_text(encoding="utf-8")
+routes = sorted((ROOT / "src/routes/rest").rglob("*.ores"))
+assert len(routes) == 6, "expected six method files in the demo"
+for source in [ROOT / "src/main.ores", *routes]:
+    body = source.read_text()
+    for imported in re.findall(r'from "([^"]+)"', body):
+        if imported.startswith("+"):
+            assert imported.startswith("+/"), (source, imported)
+            rel = imported[2:]
+            assert rel and not rel.startswith("/") and ".." not in Path(rel).parts
+            assert (ROOT / (rel + ".ores")).is_file(), (source, imported)
+    if source in routes:
+        assert 'from "+/src/lib/telemetry"' in body
+        if "/foo/bar/baz/" in source.as_posix():
+            assert 'from "+/src/lib/store"' in body
 
-ref = (ROOT / "SOURCE_REF").read_text(encoding="ascii").strip()
-assert re.fullmatch(r"[0-9a-f]{40}", ref), "SOURCE_REF must pin an exact compiler commit"
-print("project-root-import layout: OK (structural only; real compiler tests still required)")
+spec = importlib.util.spec_from_file_location("route_generator", ROOT / "scripts/generate-routes.py")
+generator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(generator)
+with tempfile.TemporaryDirectory() as tmp:
+    temp_root = Path(tmp)
+    shutil.copytree(ROOT / "src/routes", temp_root / "src/routes")
+    generator.ROOT = temp_root
+    generator.generate(3000, temp_root / "data")
+    generated = (temp_root / "src/generated/routes.ores").read_text()
+    assert generated.count('import module route as route_') == 6
+    for source in routes:
+        rel = source.relative_to(ROOT).with_suffix("").as_posix()
+        assert f'from "+/{rel}"' in generated, rel
+    assert 'from "../routes/' not in generated
+
+print("PASS: canonical +/ imports, resolved project files, generated route imports")
