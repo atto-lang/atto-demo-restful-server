@@ -1,7 +1,7 @@
 schema_version = "1"
 
 [project]
-name = "oreslang-demo-restful-server"
+name = "atto-demo-restful-server"
 version = "0.1.0"
 root = "."
 

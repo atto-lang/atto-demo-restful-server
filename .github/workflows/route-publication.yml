@@ -14,8 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source tree and compiler pin
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          source_ref="$(tr -d '\n' < SOURCE_REF)"
+          [[ "$source_ref" =~ ^[0-9a-f]{40}$ ]]
+          git diff --quiet
+          git diff --cached --quiet
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
@@ -30,6 +41,10 @@ jobs:
           bash -n scripts/test-guards.sh
       - name: Check source and submodule trust guards
         run: bash scripts/test-guards.sh
+      - name: Check exact compiler and recursive dependency graph (offline)
+        run: bash scripts/test-dependency-checker.sh
+      - name: Check project-root import acceptance gate (host-only)
+        run: bash scripts/test-project-root-probe.sh
       - name: Check bounded embedded-app extraction
         run: |
           mkdir -p .cache/archive-test
@@ -44,7 +59,3 @@ jobs:
           grep -Fq 'PORT must be a decimal integer in 1..65535.' scripts/run-server.sh
           grep -Fq 'Refusing to grant demo filesystem capabilities to the filesystem root.' scripts/run-server.sh
           grep -Fq 'DATA_DIR cannot contain a comma' scripts/run-server.sh
-      - name: Check package-root imports
-        run: python3 tests/project_root_imports.py
-      - name: Verify native source-bundle packaging
-        run: python3 -m unittest discover -s tests -p test_source_bundle.py -v

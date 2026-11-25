@@ -1,13 +1,40 @@
-# Oreslang demo RESTful server
+# AttoLang demo RESTful server
+
+This imports the executable legacy Oreslang implementation into
+`atto-lang/atto-demo-restful-server`, preserving both Git histories. The destination
+scope document is retained in [docs/DESTINATION_SCOPE.md](docs/DESTINATION_SCOPE.md).
+Existing `.ores`, `ORES_*` variables, Java package names and wire telemetry schemas
+remain compatibility interfaces. See [the migration checkpoint](docs/REST_RUNTIME_CHECKPOINT_2026-11-10.md)
+for exact pins, executed evidence and compiler blockers.
 
 A real HTTP/1.1 server on **127.0.0.1:3000**, built with Oreslang Spin and the native
 HTTP runtime. Every matched request gets a fresh actor. Read handlers use shared
 actors; mutation handlers use isolated actors that exclusively claim the moved
 HTTP exchange.
 
+## Canonical-language compatibility boundary
+
+This PR preserves an executable **legacy Oreslang** demo as migration input, not a completed canonical AttoLang `.atto` implementation. Its checked-in `.ores` sources and Python build/test helpers are migration blockers; no AttoLang native-guest parity or production release is implied. Keep this PR draft until a separate audited `.atto` guest port, Rust supporting tests, and compiler-backed execution evidence are available.
+
+## Naming migration and language authority
+
+This repository is maintained at [atto-lang/atto-demo-restful-server](https://github.com/atto-lang/atto-demo-restful-server); use `https://github.com/atto-lang/atto-demo-restful-server.git` for Git remotes and canonical `.atto` source examples. The normative language contract is [atto-spec](https://github.com/atto-lang/atto-spec), with executable guest evidence tracked by [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance). Follow current ownership, borrowing, effects, actor, and syntax rules there; do not infer implemented features from a README or unexecuted CI.
+
+## Repository ownership and contribution routing
+
+**Belongs here:** Runnable reference REST server and actor-backed HTTP request/response examples, routes, fixtures and deployment notes.
+
+**Belongs elsewhere:** Reusable routing semantics in atto-http-routing, generic API app scaffold in atto-api-server.atto and performance data in atto-restful-server-perf-benchmarks.
+
+**Security and portability boundary:** Bind host and ports explicitly, validate requests and cancellation, bound response sizes, and document security settings before internet exposure.
+
+AttoLang is the canonical project name; new source, examples and documentation use `.atto` and the `atto-lang` repository organization. This README defines scope, not feature readiness.
+
+**Acceptance:** name exact source SHA/tree, runtime/toolchain, positive and negative checks and execution receipt before claiming support. Host-only tests and empty CI steps do not prove guest execution.
+
 ## Run
 
-Prerequisites: **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
+Prerequisites: **Bash 5** (for source-policy checks), **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
 Oreslang dependencies. Set `JAVA_HOME` to your JDK 25 installation. The startup
 script uses its Java binary, or `ORES_JAVA` if explicitly set.
 
@@ -39,56 +66,6 @@ PORT=3001 DATA_DIR=/tmp/ores-rest-demo ./scripts/run-server.sh
 BASE_URL=http://127.0.0.1:3001 ./scripts/curl-10.sh
 ./scripts/test.sh
 ```
-
-## Project-root imports
-
-The `.ores.pkg.toml` in this repository defines the Oreslang package root.
-Local source imports use `+/` relative to that directory, **not** relative
-to each route file and **not** relative to the `[source].roots = ["src"]`
-search root. For example, in `src/routes/rest/foo/bar/baz/delete.ores`:
-
-```ores
-import module telemetry from "+/src/lib/telemetry";
-import module store from "+/src/lib/store";
-```
-
-`+/lib/store` would mean the nonexistent repository-root `lib/`, and
-`+src/lib/store` is intentionally invalid. The route generator also emits
-rooted `+/src/routes/...` imports. `tests/project_root_imports.py`
-checks the source files and generated import paths without launching a
-compiler.
-
-The native source bundle also verifies that `src/main.ores` and each
-direct, single-line `+/...`, `./...`, or `../...` source import target
-exist in the embedded archive. Missing targets, parent traversal outside the
-archive, and obsolete `@/` syntax fail before replacing an output bundle.
-The demo's native archive has no verified zed-pkg installation or lockfile,
-so `pkg:` imports are rejected at packaging time. Host-absolute paths,
-including Windows drive and UNC paths, are also rejected rather than relying
-on the runtime machine's filesystem. A future package-enabled native build
-must explicitly bundle and verify the locked dependency closure.
-
-The source-bundle preflight admits only the demo's single-line import
-declarations. An unrecognized or multiline `import` declaration fails
-closed instead of skipping a dependency check; source compilation remains
-the authority for language syntax and link-time behavior.
-
-Bundle entry names are restricted to portable path components: literal
-backslashes and colons in source filenames are rejected before writing ZIP
-entries. `+/` imports reject empty segments, `.`, and `..` components
-rather than normalizing them, matching the Java resolver's import contract.
-These guards protect the archive's cross-platform identity; they do not
-prove successful compiler execution.
-
-These checks complement rather than replace compiler parsing and linking.
-
-**Compatibility gate:** this branch requires Oreslang compiler support for
-`+/` (proposed in
-[oreslang-source.java #1050](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/1050)).
-The `SOURCE_REF` file currently pins an older compiler and is intentionally
-unchanged. Do not merge or publish native builds from this branch until a
-reviewed, fully tested compiler commit including `+/` is pinned and the
-JDK 25 interpreter/native verification suites pass.
 
 ## File routes
 
@@ -161,10 +138,16 @@ state, not OS-process isolation. The JVM transport retains the socket/FD.
 
 ## Validation
 
-`./scripts/test.sh` runs the original 31 real-HTTP and route-generation checks plus an opt-in core/userland diagnostic integration check: the 10-request
+`./scripts/test.sh` runs 44 real-HTTP and route-generation checks plus the core/userland diagnostic integration check: the 10-request
 curl sequence, error responses, HEAD/OPTIONS, persistence across a server restart,
-path mapping, unsupported method files and symlink rejection. The pinned Spin
-revision also passed its existing 55 HTTP assertions and routing golden suite.
+path mapping, unsupported method files, symlink rejection, three capacity-503 responses
+while a real guest upload is suspended, deadline expiry, disconnect recovery, and
+SIGTERM during an admitted upload. Set `REST_TEST_LOG_DIR` to retain server logs.
+On this pin a busy body read expires at ten seconds with HTTP 500, not 504.
+The signal test verifies process/listener exit and unchanged storage; it does not
+prove graceful draining or serial HTTP actor lowering. Spin routing golden output and 110 real-HTTP assertions passed with the
+compatibility backport; its original compiler pin failed duplicate-Host rejection.
+The REST suite also checks six malformed-header rejections before guest admission.
 Validation used JDK 25 interpreter mode; native-image/optimizing-Graal performance
 was not measured for this demo.
 
@@ -329,8 +312,8 @@ these measurements.
 
 ## Core runtime performance diagnostics (experimental compiler pin)
 
-The compiler pin on this development branch targets the diagnostic implementation
-in [oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451).
+The compiler pin includes the diagnostic implementation originally developed in
+[oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451).
 This is **core runtime diagnostics**, not userland `oreslang-otel`.
 
 ```sh
@@ -354,11 +337,11 @@ To capture both low-level timings and guarded core events, use
 `./scripts/run-server.sh --core-perf --core-debug`. Core debug emits
 `ores-core-debug.v1` JSONL at shutdown; `ORES_CORE_DEBUG=true` also enables
 it and `--no-core-debug` overrides that environment setting.
-The pinned source revision is still a draft and must pass exact-commit
-integration testing before benchmarks should be treated as verified.
+The compiler is an immutable compatibility pin from merged history. The checkpoint
+records application validation; no current throughput benchmark is claimed.
 
 The automated diagnostic check uses the normal ten-request script, waits for
-the userland request spans, gracefully terminates the server and verifies that
+the userland request spans, sends SIGTERM to the server and verifies that
 both core JSONL schemas were exported at shutdown, including fixed-name HTTP
 phase timings and numeric debug events. It also checks that core records
 contain no request path, body or trace ID:
@@ -386,7 +369,7 @@ result and stop the server. Then restart terminal 1 with:
 ./scripts/run-server.sh --core-perf --core-debug 2>&1 | tee .cache/core-on.log
 ```
 
-Repeat the same benchmark workload and stop the server gracefully to export
+Repeat the same benchmark workload and stop the server to export
 the bounded core capture. To inspect the two independent timing namespaces:
 
 ```sh
