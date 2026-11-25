@@ -25,10 +25,14 @@ define isoactor Handler as
         return;
       fi
 
-      await store.stage_for_size(body);
+      val Future<void> pending_stage_for_size_1 = store.stage_for_size(body);
+
+      await pending_stage_for_size_1;
       stage_owned = true;
-      val int body_bytes = await store.staged_size();
-      await store.clear_stage();
+      val Future<int> pending_staged_size_2 = store.staged_size();
+      val int body_bytes = await pending_staged_size_2;
+      val Future<void> pending_clear_stage_3 = store.clear_stage();
+      await pending_clear_stage_3;
       stage_owned = false;
       if body_bytes > store.max_resource_bytes(); then
         await request.respond(413, "text/plain", "resource exceeds persisted byte quota");
@@ -37,8 +41,11 @@ define isoactor Handler as
         return;
       fi
 
-      val bool exists = await store.exists();
-      await store.write(body);
+      val Future<bool> pending_exists_4 = store.exists();
+
+      val bool exists = await pending_exists_4;
+      val Future<void> pending_write_5 = store.write(body);
+      await pending_write_5;
       if !exists; then request.set_header("Location", "/foo/bar/baz"); fi
       await request.respond(exists ? 200 : 201, "text/plain; charset=utf-8", body);
       telemetry_status = exists ? 200 : 201;
@@ -51,7 +58,8 @@ define isoactor Handler as
       // failure or attempt to unlink an unowned pre-existing symlink.
       if stage_owned; then
         try {
-          await store.clear_stage();
+          val Future<void> pending_clear_stage_6 = store.clear_stage();
+          await pending_clear_stage_6;
           stage_owned = false;
         } catch (cleanup_failure) {
           span.event("ERROR", "quota staging cleanup failed");

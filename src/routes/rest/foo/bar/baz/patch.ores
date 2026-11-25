@@ -25,7 +25,9 @@ define isoactor Handler as
         return;
       fi
 
-      val bool exists = await store.exists();
+      val Future<bool> pending_exists_1 = store.exists();
+
+      val bool exists = await pending_exists_1;
       if !exists; then
         await request.respond(404, "text/plain", "resource not found");
         telemetry_status = 404;
@@ -34,7 +36,8 @@ define isoactor Handler as
       fi
 
       // Bound the existing representation before reading it into actor state.
-      val int current_bytes = await store.size();
+      val Future<int> pending_size_2 = store.size();
+      val int current_bytes = await pending_size_2;
       if current_bytes > store.max_resource_bytes(); then
         await request.respond(413, "text/plain", "existing resource exceeds persisted byte quota");
         telemetry_status = 413;
@@ -42,15 +45,20 @@ define isoactor Handler as
         return;
       fi
 
-      val String current = await store.read_bounded();
+      val Future<String> pending_read_bounded_3 = store.read_bounded();
+
+      val String current = await pending_read_bounded_3;
       val String updated = current + body;
 
       // UTF-8 byte quota, not character count. The staging file is safe here
       // because server admission is one exchange through actor finalization.
-      await store.stage_for_size(updated);
+      val Future<void> pending_stage_for_size_4 = store.stage_for_size(updated);
+      await pending_stage_for_size_4;
       stage_owned = true;
-      val int updated_bytes = await store.staged_size();
-      await store.clear_stage();
+      val Future<int> pending_staged_size_5 = store.staged_size();
+      val int updated_bytes = await pending_staged_size_5;
+      val Future<void> pending_clear_stage_6 = store.clear_stage();
+      await pending_clear_stage_6;
       stage_owned = false;
       if updated_bytes > store.max_resource_bytes(); then
         await request.respond(413, "text/plain", "resource exceeds persisted byte quota");
@@ -59,7 +67,9 @@ define isoactor Handler as
         return;
       fi
 
-      await store.write(updated);
+      val Future<void> pending_write_7 = store.write(updated);
+
+      await pending_write_7;
       await request.respond(200, "text/plain; charset=utf-8", updated);
       telemetry_status = 200;
       self.end();
@@ -71,7 +81,8 @@ define isoactor Handler as
       // failure or attempt to unlink an unowned pre-existing symlink.
       if stage_owned; then
         try {
-          await store.clear_stage();
+          val Future<void> pending_clear_stage_8 = store.clear_stage();
+          await pending_clear_stage_8;
           stage_owned = false;
         } catch (cleanup_failure) {
           span.event("ERROR", "quota staging cleanup failed");

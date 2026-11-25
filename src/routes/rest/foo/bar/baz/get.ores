@@ -17,7 +17,8 @@ define actor Handler as
         // requesting its contents from the filesystem. This is a preflight
         // check, not a substitute for a descriptor-bound bounded read when
         // out-of-band writers can mutate the file concurrently.
-        val int persisted_bytes = await store.size();
+        val Future<int> pending_size_1 = store.size();
+        val int persisted_bytes = await pending_size_1;
         if persisted_bytes > store.max_resource_bytes(); then
           await request.respond(500, "text/plain",
                                 "stored resource exceeds persisted byte quota");
