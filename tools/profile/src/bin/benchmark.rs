@@ -7,7 +7,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn base_url(value: &str) -> Result<String> {
     let base = value.trim_end_matches('/');
     let rest = base.strip_prefix("http://").ok_or("HTTP loopback only")?;
-    let port = ["127.0.0.1:", "localhost:", "[::1]:"]
+    let port = ["127.0.0.1:", "[::1]:"]
         .iter().find_map(|prefix| rest.strip_prefix(prefix))
         .ok_or("refusing non-loopback or path-bearing BASE_URL")?;
     if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) ||
@@ -18,8 +18,12 @@ fn base_url(value: &str) -> Result<String> {
 }
 
 fn field<'a>(line: &'a str, prefix: &str) -> Result<&'a str> {
-    line.split_whitespace().find_map(|token| token.strip_prefix(prefix))
-        .ok_or_else(|| format!("missing {prefix}").into())
+    let mut matches = line.split_whitespace().filter_map(|token| token.strip_prefix(prefix));
+    let value = matches.next().ok_or_else(|| format!("missing {prefix}"))?;
+    if value.is_empty() || matches.next().is_some() {
+        return Err(format!("empty or duplicate {prefix}").into());
+    }
+    Ok(value)
 }
 
 fn uuid(s: &str) -> bool {
@@ -44,12 +48,12 @@ fn parse_round(output: &str) -> Result<Round> {
             return Err("wrong response count or actor order".into());
         }
         let id = field(line, "request_id=")?;
-        if !uuid(id) || !ids.insert(id) {
+        if !uuid(id) || !ids.insert(id.to_ascii_lowercase()) {
             return Err("duplicate or invalid request ID".into());
         }
         let seconds: f64 = field(line, "time=")?
             .strip_suffix('s').ok_or("invalid curl seconds suffix")?.parse()?;
-        if !seconds.is_finite() || seconds < 0.0 { return Err("invalid timing".into()); }
+        if !seconds.is_finite() || !(0.0..=10.0).contains(&seconds) { return Err("invalid timing".into()); }
         data.retries = data.retries.checked_add(field(line, "retries=")?.parse::<u64>()?)
             .ok_or("retry counter overflow")?;
         if expected[seen] == "shared" { data.shared.push(seconds * 1000.0); }
@@ -92,7 +96,7 @@ fn run() -> Result<()> {
     for i in 0..runs {
         let start = Instant::now();
         let output = Command::new("bash").arg(root.join("scripts/curl-10.sh"))
-            .current_dir(root).env("BASE_URL", &base).output()?;
+            .current_dir(root).env("BASE_URL", &base).env("REST_BENCHMARK_DIRECT", "1").output()?;
         let elapsed = start.elapsed().as_secs_f64()*1000.0;
         print!("{}", String::from_utf8_lossy(&output.stdout));
         if !output.status.success() {
@@ -109,7 +113,7 @@ fn run() -> Result<()> {
     }
     let mut phases = [Vec::new(), Vec::new(), Vec::new()];
     for _ in 0..20 {
-        let output = Command::new("curl").args(["--max-time", "10", "-sS", "-o"])
+        let output = Command::new("curl").args(["-q", "--noproxy", "*", "--proto", "=http", "--max-time", "10", "-sS", "-o"])
             .arg(if cfg!(windows) { "NUL" } else { "/dev/null" })
             .args(["-w", "%{http_code} %{time_connect} %{time_starttransfer} %{time_total}"])
             .arg(format!("{base}/health")).output()?;
@@ -119,7 +123,7 @@ fn run() -> Result<()> {
         if fields.len()!=4 || fields[0]!="200" { return Err("health must return HTTP 200".into()); }
         for i in 0..3 {
             let seconds: f64 = fields[i+1].parse()?;
-            if !seconds.is_finite() || seconds < 0.0 { return Err("bad health timing".into()); }
+            if !seconds.is_finite() || !(0.0..=10.0).contains(&seconds) { return Err("bad health timing".into()); }
             phases[i].push(seconds*1000.0);
         }
     }
@@ -176,6 +180,16 @@ mod tests {
                   "http://localhost:3000?x=1"] { assert!(base_url(s).is_err()); }
         assert!(base_url("http://127.0.0.1:3000/").is_ok());
         assert!(base_url("http://[::1]:3000").is_ok());
+        assert!(base_url("http://localhost:3000").is_err());
+    }
+    #[test]
+    fn duplicate_fields_and_case_aliases_fail_closed() {
+        let good = fixture();
+        assert!(parse_round(&good.replace("retries=0", "retries=0 retries=1")).is_err());
+        assert!(parse_round(&good.replace("time=0.01s", "time=1e308s")).is_err());
+        let replay = good.replace("00000000-0000-0000-0000-000000000001", "abcdefab-cdef-abcd-abcd-000000000001")
+            .replace("00000000-0000-0000-0000-000000000002", "ABCDEFAB-CDEF-ABCD-ABCD-000000000001");
+        assert!(parse_round(&replay).is_err());
     }
     #[test]
     fn medians() {
