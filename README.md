@@ -1,382 +1,48 @@
-# Oreslang demo RESTful server
-
-A real HTTP/1.1 server on **127.0.0.1:3000**, built with Oreslang Spin and the native
-HTTP runtime. Every matched request gets a fresh actor. Read handlers use shared
-actors; mutation handlers use isolated actors that exclusively claim the moved
-HTTP exchange.
-
-## Run
-
-Prerequisites: **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
-Oreslang dependencies. Set `JAVA_HOME` to your JDK 25 installation. The startup
-script uses its Java binary, or `ORES_JAVA` if explicitly set.
-
-```bash
-./scripts/setup.sh
-./scripts/run-server.sh
-```
-
-In another terminal:
-
-```bash
-./scripts/curl-10.sh
-```
-
-The curl script executes **10 REST requests**, checks their status codes and
-bodies, and prints each result. It covers GET, POST, PUT, PATCH, and DELETE. It
-replaces and finally deletes the demo resource; use it against a demo instance.
-Stop the server with Ctrl-C.
-
-An existing clean compiler checkout can be reused with `ORESLANG_SOURCE_DIR` if
-its commit matches `SOURCE_REF`. Otherwise setup clones and builds that exact
-revision under `.cache/`. Spin, routing and oreslang-otel are pinned Git submodules. Setup
-refuses to reset an existing compiler checkout.
-
-Optional settings:
-
-```bash
-PORT=3001 DATA_DIR=/tmp/ores-rest-demo ./scripts/run-server.sh
-BASE_URL=http://127.0.0.1:3001 ./scripts/curl-10.sh
-./scripts/test.sh
-```
-
-## File routes
-
-`src/routes/rest` is the root of REST routes. Directory names become literal URL
-segments, and lowercase method filenames select the HTTP verb:
-
-```text
-src/routes/rest/
-├── health/
-│   └── get.ores                 GET /health
-└── foo/bar/baz/
-    ├── get.ores                 GET /foo/bar/baz
-    ├── post.ores                POST /foo/bar/baz
-    ├── put.ores                 PUT /foo/bar/baz
-    ├── patch.ores               PATCH /foo/bar/baz
-    └── delete.ores              DELETE /foo/bar/baz
-```
-
-Each method file declares its own `Handler` actor and exports
-`route.handler(): HttpHandler`. The factory calls `http.handler("Handler")` in
-that actor's declaring source unit. Copy an existing method file to add a route;
-no central route list needs editing. Root-level `get.ores` maps to `/`.
-
-At startup, `scripts/generate-routes.py` scans the tree and emits imports and
-registrations into ignored `src/generated/routes.ores`. It supports `get`, `post`,
-`put`, `patch`, `delete`, `head`, and `options`; rejects unknown method files and
-symlinked/out-of-root route sources; and restricts directory names to literal
-letters, digits, `_`, and `-`. Restart after changing the route tree. Dynamic
-parameter directories are not implemented in this demo.
-
-Incoming URLs are matched against the compiled route table. They never become
-filesystem paths. Source files are not served as static content. Spin supplies
-HEAD fallback, OPTIONS/Allow, 404 and 405 responses.
-
-## Resource behavior
-
-`/foo/bar/baz` represents one UTF-8 text resource, persisted in `data/baz.txt`:
-
-| Method | Behavior | Status |
-| --- | --- | --- |
-| GET | Read the current representation | 200, or 404 if absent |
-| POST | Create only when absent | 201 with Location, or 409 |
-| PUT | Replace or create | 200, or 201 with Location |
-| PATCH | Append the supplied text | 200, or 404 if absent |
-| DELETE | Remove the resource | 204, or 404 if absent |
-
-POST, PUT, and PATCH require `Content-Type: text/plain` and a nonempty UTF-8 body.
-Other media types return 415; empty bodies return 400. PATCH is a documented text
-append operation, not JSON Patch. Bodies are limited to 64 KiB per request.
-`GET /health` returns `{"status":"ok"}`. Responses identify actor mode, and resource
-responses identify their route source file through `X-Route-File`.
-
-## Demo constraints
-
-Admission is **one active request**, held until its actor finishes. This serializes
-file operations within a single server process; excess concurrent requests get
-503. The curl script retries only admission rejection. Use one server process per
-data directory. This is deliberately a small persistence demo: file writes are
-not crash-atomic database transactions, appended resources have no total-size
-quota, and there is no authentication or production concurrency claim.
-
-The server binds loopback, allows network access only to its configured local
-port, and scopes file read/write permission to the data directory. Request paths
-cannot choose a storage filename. Requests have a 10-second deadline. TLS,
-JSON codecs, database transactions and graceful signal-driven draining are outside
-this example; Ctrl-C terminates the development process.
-
-Runtime isolation means exclusive guest authority over the request and actor-local
-state, not OS-process isolation. The JVM transport retains the socket/FD.
-
-## Validation
-
-`./scripts/test.sh` runs the original 31 real-HTTP and route-generation checks plus an opt-in core/userland diagnostic integration check: the 10-request
-curl sequence, error responses, HEAD/OPTIONS, persistence across a server restart,
-path mapping, unsupported method files and symlink rejection. The pinned Spin
-revision also passed its existing 55 HTTP assertions and routing golden suite.
-Validation used JDK 25 interpreter mode; native-image/optimizing-Graal performance
-was not measured for this demo.
-
-## Native AOT-only and hybrid builds
-
-Select the native capability **at build time**:
-
-```bash
-# JAVA_HOME must point to GraalVM with native-image, matching the pinned SDK.
-# ORESLANG_SOURCE_DIR must be a clean checkout at this repo's SOURCE_REF.
-./scripts/build-native.sh aot
-# Optional alternative with runtime compilation support:
-./scripts/build-native.sh hybrid
-```
-
-The build generates the route registry, embeds the fixed application/import graph,
-compiles a native application launcher, and packages the pthread carrier library
-and license notices. It produces `dist/rest-server-aot-<os>-<arch>.tar.gz` (or
-`rest-server-hybrid-...`). Python, Maven, Java, Git and compiler source are build
-requirements only. The server in the resulting archive needs none of them.
-
-After unpacking the matching platform archive:
-
-```bash
-./bin/rest-server --port=3000 --data-dir=./data
-./bin/rest-server --build-info
-# Another terminal, for the optional curl demo:
-./curl-10.sh
-```
-
-`PORT` and `DATA_DIR` also work. Runtime configuration does not regenerate the
-route registry. The native launcher extracts its embedded application into a
-private temporary directory and supplies per-process configuration. It removes
-that directory on normal termination/SIGTERM; SIGKILL may leave temporary files.
-The packaged directory can be moved independently of the build tree.
-
-AOT-only means the Java-written runtime/interpreter and reachable libraries are
-native machine code, with **no guest JIT**. Oreslang handlers remain interpreted;
-application-specific ahead-of-time machine-code lowering is a separate compiler
-feature. `--mode=hybrid`/`--mode=jit` cannot enable JIT inside an AOT-only image.
-Hybrid images accept `--mode=aot` to disable their guest JIT for a run. No external
-JVM or GraalVM installation is required for either native build.
-
-Validate the actual archive, including relocation, checksums, absent developer
-tools, a required native carrier library, mode enforcement, and HTTP persistence:
-
-```bash
-python3 tests/native_distribution.py dist/rest-server-aot-darwin-arm64.tar.gz
-```
-
-macOS ARM64 AOT-only and hybrid archives were built and tested locally. Linux
-packaging paths are supplied but not validated by these macOS results. These
-executables depend on OS system libraries and the bundled carrier library; they
-are not fully static, signed/notarized application releases. Native Image does
-not alter the demo's single-admission file-store constraints.
-## Native request telemetry
-
-`dependencies/otel` pins [oreslang-otel](https://github.com/ores-truffle-oreslang/oreslang-otel),
-whose only runtime dependency is the Oreslang standard library. Startup reads no
-telemetry credentials and needs no collector. Stdout contains JSON Lines with
-`schema: "oreslang-otel.v1"`, plus the existing human-readable startup messages.
-Filter JSON records when consuming the log stream.
-
-Every **admitted** request receives a new `X-Ores-Trace-Id` response header. Use
-that value to correlate these spans and log records:
-
-| Span | Interval |
-| --- | --- |
-| `http.server.request` | Transport admission through response closure and actor finalization, ending when the supervisor resumes |
-| `routing.dispatch` | Spin routing and dispatch call, including any scheduling within that call |
-| `actor.handle` | Handler claim/setup through awaited response and handler cleanup |
-
-Routing/actor spans are children of the request span and can overlap. Do not
-sum them to obtain total latency. Actor startup and move-to-claim delays are
-separate histogram observations, also potentially overlapping. Durations use
-monotonic nanoseconds; event timestamps use Unix milliseconds. The request span
-and `http.server.request.duration` metric share the same duration sample.
-`http.server.requests` emits one counter delta per completion;
-`http.server.errors` emits one for 5xx/incomplete outcomes. A 4xx is a completed
-HTTP request, not a server error. Status 0 denotes an incomplete/unknown outcome.
-
-The supervisor captures a read-only completion future before dispatching the
-exchange. It never reads a moved exchange. Handlers use actor-local spans and
-finally blocks; GET/HEAD shared actors and mutation isolated actors both log.
-Generated 404/405/OPTIONS responses have request and routing spans without a
-handler span. Deadline/handler failures still settle the supervisor observation.
-The demo remains serial: it waits for the admitted request to finalize before
-accepting the next. This is intentional with its one-request admission policy.
-
-Transport rejects before admission (for example oversized declared bodies or
-capacity 503s) have no guest exchange, response trace header, or per-request
-span. They remain transport counters. Process termination can interrupt exports.
-Console serialization/I/O contributes overhead, so these are instrumented
-latencies rather than uninstrumented performance benchmarks.
-
-The adapter logs registered operation names, not raw URLs/query strings, request
-bodies, cookies, authorization headers or arbitrary exception text. Incoming
-trace headers are not adopted; this version provides local correlation, not W3C
-propagation, OTLP export, or complete OpenTelemetry compatibility.
-
-The integration suite verifies header correlation, exactly one completed request
-span/metric, shared/isolated handlers, framework responses, no query leakage,
-and a deliberately induced handler I/O failure.
-
-### Finding a request in stdout
-
-`curl-10.sh` prints `actor=shared|isolated`, `request_id`, `time` (seconds for
-its final HTTP attempt), and the number of admission retries. The response's
-`X-Request-Id` is the same UUID in the `actor.claim` log body; prefix it with
-`ores-trace-` to find every related JSON record. Timestamps are Unix milliseconds.
-The actor claim record includes mode, actual HTTP method, and registered operation.
-The completed `http.server.request` span includes status and duration in nanoseconds.
-Framework-generated responses use `X-Actor-Mode: supervisor` and have no actor claim.
-
-GET/HEAD handlers are shared actors; PUT/POST/PATCH/DELETE handlers are isolated
-actors. Logging passes correlation strings across ownership boundaries and creates
-spans locally; it does not share a live span or revive a moved exchange.
-
-Client timing includes network/response latency. It excludes earlier rejected
-attempts and retry sleeps; the retry count makes those delays visible. Server
-request spans include actor finalization, so they need not equal client timing.
-Use startup and transfer metrics to distinguish actor overhead from handler work.
-The single-admission file store and synchronous console export affect throughput.
-
-### Truffle's deprecated Unsafe warning
-
-The JDK 25 warning naming `NodeClassImpl$NodeFieldData` originates in the pinned
-Truffle dependency, not an Ores request handler. Truffle's maintainers explain in
-[oracle/graal#12782](https://github.com/oracle/graal/issues/12782) that its VM
-integration still requires unsafe access and that replacing the deprecated access
-path is upstream work. This application does not add direct `sun.misc.Unsafe`
-usage or silence the warning. Removing it requires a compatible upstream change
-and validation of both JVM and Native Image builds; changing HTTP ownership or
-adding `--enable-native-access` does not remove that deprecated call.
-
-## Async filesystem operations
-
-The store awaits `fs.exists_async`, `read_text_async`, `write_text_async`,
-`append_text_async`, and `remove_async`. Both shared GET actors and isolated
-mutation actors release their execution carriers while filesystem work runs.
-The portable runtime uses bounded host-I/O offload, not a promise of kernel
-asynchronous disk I/O. HTTP body reads and response writes already use futures.
-The one-request admission policy still serializes this demo's file-store updates.
-
-Measure a handler (the root `/` is an unregistered 404 route):
-
-```bash
-curl --max-time 10 -sS -o /dev/null \
-  -w 'status=%{http_code} connect=%{time_connect}s first_byte=%{time_starttransfer}s total=%{time_total}s\n' \
-  http://127.0.0.1:3000/health
-./scripts/curl-10.sh
-python3 scripts/benchmark.py --runs 6
-```
-
-The benchmark runs six ten-request sequences (first is warm-up), then 20 health
-requests with TCP connection, first-byte and total curl timings. `BASE_URL` selects
-the server; it creates and deletes the demo resource. Run against a demo instance.
-
-First-byte time includes connection setup and server work. It is not a direct
-filesystem or routing duration. Console telemetry remains enabled and affects
-these measurements.
-
-## Core runtime performance diagnostics (experimental compiler pin)
-
-The compiler pin on this development branch targets the diagnostic implementation
-in [oreslang-source.java #451](https://github.com/ores-truffle-oreslang/oreslang-source.java/pull/451).
-This is **core runtime diagnostics**, not userland `oreslang-otel`.
-
-```sh
-export JAVA_HOME="$(/usr/libexec/java_home -v 25)"
-export PATH="$JAVA_HOME/bin:$PATH"
-export ORESLANG_SOURCE_DIR="$PWD/.cache/compiler-$(tr -d '[:space:]' < SOURCE_REF)"
-./scripts/setup.sh
-PORT=3000 ./scripts/run-server.sh --core-perf 2>&1 | tee .cache/core-perf.log
-```
-
-In another terminal run `./scripts/curl-10.sh` repeatedly. Stop the server
-with Ctrl-C to emit the bounded `ores-core-perf.v1` JSONL capture (stderr
-is included in the tee command). Inspect with:
-
-```sh
-jq -Rc 'fromjson? | select(.schema == "ores-core-perf.v1" and .kind == "phase")
-  | [.phase, (.duration_ns/1000000), (.start_ns/1000000)] | @tsv' .cache/core-perf.log
-```
-
-To capture both low-level timings and guarded core events, use
-`./scripts/run-server.sh --core-perf --core-debug`. Core debug emits
-`ores-core-debug.v1` JSONL at shutdown; `ORES_CORE_DEBUG=true` also enables
-it and `--no-core-debug` overrides that environment setting.
-The pinned source revision is still a draft and must pass exact-commit
-integration testing before benchmarks should be treated as verified.
-
-The automated diagnostic check uses the normal ten-request script, waits for
-the userland request spans, gracefully terminates the server and verifies that
-both core JSONL schemas were exported at shutdown, including fixed-name HTTP
-phase timings and numeric debug events. It also checks that core records
-contain no request path, body or trace ID:
-
-```sh
-./scripts/test.sh
-# Or just the dedicated combined-logging test:
-python3 tests/core_diagnostics.py
-```
-
-### Comparing timing layers
-
-Capture a baseline **with core diagnostics disabled** first. Userland OTel
-serialization remains enabled in both runs, so this measures incremental core
-instrumentation overhead, not the cost of enabling all telemetry. In terminal 1:
-
-```sh
-./scripts/run-server.sh --no-core-perf --no-core-debug 2>&1 | tee .cache/baseline.log
-```
-
-In terminal 2 run `python3 scripts/benchmark.py --runs 6`, save the JSON
-result and stop the server. Then restart terminal 1 with:
-
-```sh
-./scripts/run-server.sh --core-perf --core-debug 2>&1 | tee .cache/core-on.log
-```
-
-Repeat the same benchmark workload and stop the server gracefully to export
-the bounded core capture. To inspect the two independent timing namespaces:
-
-```sh
-# Core host/runtime phases (start_ns is relative to recorder installation).
-jq -Rr 'fromjson? | select(.schema == "ores-core-perf.v1" and .kind == "phase")
-  | [.phase, (.duration_ns/1000000)] | @tsv' .cache/core-on.log
-
-# Userland spans, trace-correlated in oreslang-otel.v1 only.
-jq -Rr 'fromjson? | select(.schema == "oreslang-otel.v1" and .signal == "span")
-  | [.ores_trace_id, .name, (.duration_ns/1000000)] | @tsv' .cache/core-on.log
-```
-
-These are **not** additive timings: phases/spans can overlap, and the core
-recorder currently has no request-scoped trace ID. Do not subtract one phase
-from another or infer a per-request core/userland waterfall. Compare cold
-startup and HTTP handoff phases separately from warm request latency, and
-repeat runs with consistent request counts and server conditions. Core capture
-keeps only the first 8192 events and does not represent an entire high-volume
-benchmark.
-
-
-`ORES_CORE_PERF=true ./scripts/run-server.sh` is equivalent. Core diagnostics
-record fixed event names and elapsed nanoseconds only; the demo still logs
-`oreslang-otel.v1` separately when enabled. Compare overhead with core logging
-off as well as on. The current capture flushes **on graceful JVM shutdown**,
-not continuously.
-
-## Strict local core profiling
-
-`./scripts/profile-core.sh` now runs the Rust profiler and requires Cargo. It performs six ten-request rounds per mode, excludes the first round from warm statistics, verifies 60 unique completed OTel request spans in each mode, and requires enabled core stdout/lifetime phases and debug records after SIGTERM. Baseline diagnostics must remain absent. Invalid/missing timing rows and malformed structured records fail the run. It binds a temporary loopback port and retains raw client logs, server logs, warm samples, runtime/revision information and JSON summaries in `.cache/profile-rust-*`. Existing `JAVA_HOME`, `ORES_JAVA` and `ORESLANG_SOURCE_DIR` select the exact pinned compiler.
-
-Run `cargo test --locked --manifest-path tools/profile/Cargo.toml` for percentile and malformed-sample checks. Client times describe the final curl attempt and exclude earlier admission retries and sleeps; overlapping core phases must not be summed. This compares diagnostic modes with userland telemetry enabled in both.
-
-## Repository ownership and migration (2026-11-08)
-
-This original `ores-truffle-oreslang/oreslang-demo-restful-server` repository is still in the Oreslang organization. The public name of the language is **AttoLang**; retain working `.ores` source and existing package, CLI and repository references until an individually verified migration.
-
-- **This repository contains/should own:** REST server tutorial, compiler-pinned source and local execution proof.
-- **Do not place here:** managed REST service hosting and unverified prod security.
-- **Responsibility split:** [atto-lang](https://github.com/atto-lang) owns the language, portable source libraries and demonstrators; [atto-co](https://github.com/atto-co) owns production multi-tenant cloud infrastructure, deployment, registry, identity and billing. The presence of similarly named `atto-*` repos does not certify transferred source identity or guest parity.
-- **Proposed first destination:** `atto-lang/oreslang-demo-restful-server` via owner-approved GitHub transfer of the **existing numeric repo ID and complete history**, preserving the old repo name. No direct legacy-org transfer to `atto-co` is authorized; later managed-product carve-outs need separate approval.
-
-**Safe transfer steps:** coordinate in [issue #26](https://github.com/ores-truffle-oreslang/.github/issues/26) and use private [transfer runbook draft #25](https://github.com/ores-truffle-oreslang/.github/pull/25). Identify source/target admins, an independent security reviewer and rollback owner; capture exact head SHA/tree, numeric ID, branch protections/rulesets, PRs, releases, packages, permissions, Actions/runners, secrets, webhooks, GitHub Apps, Pages and dependencies. Never mirror private source without authorization. After real transfer, verify same ID/history/tree and permissions, migrate consumer references separately, then test the exact new head with executed CI steps. Zero-step jobs (`steps=[]`/`null`) are `NOT_EXECUTED`, and host-only/static tests do not prove native guest execution or production server capability.
+> **AI agent instructions (organization-wide):** Before working on code, issues, or pull requests, read and follow the [organization `AGENTS.md`](https://github.com/atto-lang/.github/blob/main/AGENTS.md), including its **merge-first stealth-development policy**. Honor any repository-local `AGENTS.md`, explicit holds, and GitHub-enforced rules.
+
+# atto-demo-restful-server
+
+Reference REST API server demonstrating HTTP actors and routing in AttoLang.
+
+## Naming migration and language authority
+
+This repository is maintained at [atto-lang/atto-demo-restful-server](https://github.com/atto-lang/atto-demo-restful-server); use `https://github.com/atto-lang/atto-demo-restful-server.git` for Git remotes and canonical `.atto` source examples. The normative language contract is [atto-spec](https://github.com/atto-lang/atto-spec), with executable guest evidence tracked by [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance). Follow current ownership, borrowing, effects, actor, and syntax rules there; do not infer implemented features from a README or unexecuted CI.
+
+## What this project explores
+
+Example HTTP routes, actor-based request processing, and API behavior.
+
+## How to use these examples
+
+1. Check the repository contents for `.atto` examples and target-specific project manifests.
+2. Use the compiler/backend indicated by each example's actual files and scripts.
+3. Run checked-in tests or example commands only where documented and verified.
+4. Record compiler revision, expected output, and actual result when reporting an issue.
+
+## Portability and status
+
+These examples are intended to demonstrate AttoLang concepts. Examples may depend on unfinished language features or particular backends; their presence is not evidence that every listed feature executes on all targets. Unsupported features should be marked in the individual example's documentation.
+
+## Links
+
+- [AttoLang repositories](https://github.com/atto-lang)
+- [Canonical language specification](https://github.com/atto-lang/atto-spec)
+- [Backend conformance](https://github.com/atto-lang/atto-platform-conformance)
+
+## Repository ownership and contribution routing
+
+**Belongs here:** Runnable reference REST server and actor-backed HTTP request/response examples, routes, fixtures and deployment notes.
+
+**Belongs elsewhere:** Reusable routing semantics in atto-http-routing, generic API app scaffold in atto-api-server.atto and performance data in atto-restful-server-perf-benchmarks.
+
+**Security and portability boundary:** Bind host and ports explicitly, validate requests and cancellation, bound response sizes, and document security settings before internet exposure.
+
+AttoLang is the canonical project name; new source, examples and documentation use `.atto` and the `atto-lang` repository organization. This README defines scope, not feature readiness.
+
+**Acceptance:** name exact source SHA/tree, runtime/toolchain, positive and negative checks and execution receipt before claiming support. Host-only tests and empty CI steps do not prove guest execution.
+
+## Migration and release evidence
+
+The legacy Oreslang REST demonstration has moved into the AttoLang repository namespace. This is a successor repository, not proof of a same-ID GitHub transfer. Preserve the working legacy `.ores` sources and exact compiler/dependency pins until their replacements have executed successfully. The language and reference examples belong in `atto-lang`; production multi-tenant cloud infrastructure, registry, identity and billing belong in `atto-co`.
+
+For a release, record the demo commit/tree, compiler and nested dependency revisions, toolchain, executed test steps and positive/negative results. Source-only route checks do not establish native HTTP actor execution, and a zero-step Actions job is not executed evidence. Validate real HTTP behavior and the applicable native distribution modes before claiming runtime support. Never publish private dependency source in a public repository.
