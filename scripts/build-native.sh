@@ -22,7 +22,7 @@ classes="$build/classes"
 mkdir -p "$classes"
 # Freeze the discovered route registry and embed only Ores sources. Runtime
 # configuration is replaced inside a per-process extracted bundle by native code.
-python3 "$root/scripts/generate-routes.py"
+bash "$root/scripts/generate-routes.sh"
 python3 - "$root" "$classes/ores-app.zip" <<'PY'
 from pathlib import Path
 import sys, zipfile
@@ -42,6 +42,7 @@ PY
 classpath="$source_dir/target/classes:$(cat "$source_dir/target/classpath.txt")"
 "$JAVA_HOME/bin/javac" --release 21 -cp "$classpath" -d "$classes" \
   "$root/native/src/dev/oreslang/demo/EmbeddedAppArchive.java" \
+  "$root/native/src/dev/oreslang/demo/NativeConfig.java" \
   "$root/native/src/dev/oreslang/demo/RestServerMain.java"
 platform="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 dist="$root/dist/rest-server-$mode-$platform"
