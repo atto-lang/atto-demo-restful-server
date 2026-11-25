@@ -1,3 +1,5 @@
+> **AI agent instructions (organization-wide):** Before working on code, issues, or pull requests, read and follow the [organization `AGENTS.md`](https://github.com/atto-lang/.github/blob/main/AGENTS.md), including its **merge-first stealth-development policy**. Honor any repository-local `AGENTS.md`, explicit holds, and GitHub-enforced rules.
+
 # AttoLang demo RESTful server
 
 This imports the executable legacy Oreslang implementation into
@@ -14,7 +16,7 @@ HTTP exchange.
 
 ## Canonical-language compatibility boundary
 
-This PR preserves an executable **legacy Oreslang** demo as migration input, not a completed canonical AttoLang `.atto` implementation. Its checked-in `.ores` sources and Python build/test helpers are migration blockers; no AttoLang native-guest parity or production release is implied. Keep this PR draft until a separate audited `.atto` guest port, Rust supporting tests, and compiler-backed execution evidence are available.
+This PR preserves an executable **legacy Oreslang** demo as migration input, not a completed canonical AttoLang `.atto` implementation. Its checked-in `.ores` sources and Python build/test helpers are migration blockers; no AttoLang native-guest parity or production release is implied. The retained legacy implementation is not a completed `.atto` migration; a separate compiler-backed guest port and native revalidation remain necessary.
 
 ## Naming migration and language authority
 
@@ -34,7 +36,7 @@ AttoLang is the canonical project name; new source, examples and documentation u
 
 ## Run
 
-Prerequisites: **Bash 5** (for source-policy checks), **JDK 25**, Maven, Git, Python 3.9+, curl, and GitHub access to the
+Prerequisites: **Bash 5** (for source-policy checks), **JDK 25**, Maven, Git, Cargo, Python 3.9+, curl, and GitHub access to the
 Oreslang dependencies. Set `JAVA_HOME` to your JDK 25 installation. The startup
 script uses its Java binary, or `ORES_JAVA` if explicitly set.
 
@@ -89,7 +91,7 @@ Each method file declares its own `Handler` actor and exports
 that actor's declaring source unit. Copy an existing method file to add a route;
 no central route list needs editing. Root-level `get.ores` maps to `/`.
 
-At startup, `scripts/generate-routes.py` scans the tree and emits imports and
+At startup, the Rust publisher `scripts/generate-routes.sh` scans the tree and emits imports and
 registrations into ignored `src/generated/routes.ores`. It supports `get`, `post`,
 `put`, `patch`, `delete`, `head`, and `options`; rejects unknown method files and
 symlinked/out-of-root route sources; and restricts directory names to literal
@@ -299,7 +301,7 @@ curl --max-time 10 -sS -o /dev/null \
   -w 'status=%{http_code} connect=%{time_connect}s first_byte=%{time_starttransfer}s total=%{time_total}s\n' \
   http://127.0.0.1:3000/health
 ./scripts/curl-10.sh
-python3 scripts/benchmark.py --runs 6
+bash scripts/benchmark.sh --runs 6
 ```
 
 The benchmark runs six ten-request sequences (first is warm-up), then 20 health
@@ -362,7 +364,7 @@ instrumentation overhead, not the cost of enabling all telemetry. In terminal 1:
 ./scripts/run-server.sh --no-core-perf --no-core-debug 2>&1 | tee .cache/baseline.log
 ```
 
-In terminal 2 run `python3 scripts/benchmark.py --runs 6`, save the JSON
+In terminal 2 run `bash scripts/benchmark.sh --runs 6`, save the JSON
 result and stop the server. Then restart terminal 1 with:
 
 ```sh
@@ -402,3 +404,19 @@ not continuously.
 `./scripts/profile-core.sh` now runs the Rust profiler and requires Cargo. It performs six ten-request rounds per mode, excludes the first round from warm statistics, verifies 60 unique completed OTel request spans in each mode, and requires enabled core stdout/lifetime phases and debug records after SIGTERM. Baseline diagnostics must remain absent. Invalid/missing timing rows and malformed structured records fail the run. It binds a temporary loopback port and retains raw client logs, server logs, warm samples, runtime/revision information and JSON summaries in `.cache/profile-rust-*`. Existing `JAVA_HOME`, `ORES_JAVA` and `ORESLANG_SOURCE_DIR` select the exact pinned compiler.
 
 Run `cargo test --locked --manifest-path tools/profile/Cargo.toml` for percentile and malformed-sample checks. Client times describe the final curl attempt and exclude earlier admission retries and sleeps; overlapping core phases must not be summed. This compares diagnostic modes with userland telemetry enabled in both.
+
+## Migration and release evidence
+
+The legacy Oreslang REST demonstration has moved into the AttoLang repository namespace. This is a successor repository, not proof of a same-ID GitHub transfer. Preserve the working legacy `.ores` sources and exact compiler/dependency pins until their replacements have executed successfully. The language and reference examples belong in `atto-lang`; production multi-tenant cloud infrastructure, registry, identity and billing belong in `atto-co`.
+
+For a release, record the demo commit/tree, compiler and nested dependency revisions, toolchain, executed test steps and positive/negative results. Source-only route checks do not establish native HTTP actor execution, and a zero-step Actions job is not executed evidence. Validate real HTTP behavior and the applicable native distribution modes before claiming runtime support. Never publish private dependency source in a public repository.
+
+## Rust route generation and native release checks
+
+The legacy pinned REST app uses the Rust route publisher through `bash scripts/generate-routes.sh` (Cargo required). The retained Python generator is a host-only parity oracle, not a production route-generation dependency. See [route generator contracts](docs/RUST_ROUTE_GENERATOR.md) for filesystem trust boundaries, exact-byte parity, and remaining limitations.
+
+Run the dependency-free publisher tests with `cargo test --offline --locked --manifest-path tools/route-gen/Cargo.toml`. With the authorized exact compiler and GraalVM Native Image SDK, run `bash scripts/verify-native-release.sh aot` or `bash scripts/verify-native-release.sh hybrid`. These commands require a real server executable and exercise HTTP, telemetry, shutdown and persistence. A native host running interpreted guest handlers is not proof of full guest AOT or other backend parity.
+
+## Rust REST benchmark
+
+Run `BASE_URL=http://127.0.0.1:3000 bash scripts/benchmark.sh --runs 6` only against a disposable local server/data directory: this benchmark writes and deletes the demo resource. Numeric loopback only, direct HTTP without proxy or curl configuration. Host timing tests do not certify guest AOT or runtime parity.

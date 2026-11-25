@@ -18,3 +18,24 @@ The opt-in Bash-only script restricts traffic to loopback, checks `SOURCE_REF` S
 4. Execute the unchanged guest with LLVM, Wasm, Forge and .NET AOT. Any unsupported backend must produce an executed compiler-owned negative diagnostic, not fabricated guest success. Pin source/compiler SHA and artifacts, actual stepful job logs and backend-specific runtime trace before declaring parity.
 
 Shared acceptance draft: https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/pull/642. Runtime candidates: Java #656/#997/#1166, LLVM #654/#1019, and .NET #228. This documentation and probe make none of those test claims.
+
+## Hardening follow-up (2026-11-10)
+
+The live read-only script additionally enforces **six unique UUID-shaped request IDs**,
+corresponding `X-Ores-Trace-Id: ores-trace-<request_id>` headers, the
+expected `shared` actor on GET/HEAD versus `supervisor` on unrouted 404,
+and an exactly matching health JSON body. It refuses duplicate/missing
+headers, non-loopback targets, implicit HTTP proxies, or redirects.
+These are transport acceptance assertions, not proof of actor lowering.
+The separate Bash fake-curl tests are host-only tests of the probe itself.
+
+
+## Request-identity replay hardening (2026-11-11)
+
+The probe rejects UUID replay even when a malicious test server varies the
+uppercase/lowercase spelling of the same hex identity. Header values must have
+exactly one whitespace-delimited field: appended untrusted words are rejected
+rather than silently ignored. The fake-curl harness adds both negative cases;
+this remains **HOST-ONLY** evidence, not guest execution.
+
+At the exact PR head, route-publication CI [run 43042127324](https://github.com/ores-truffle-oreslang/oreslang-demo-restful-server/actions/runs/43042127324), job 130596411732, completed successfully with 13 executed steps including `Check read-only smoke script harness (fake curl, host only)`. The input-gate [run 43042127228](https://github.com/ores-truffle-oreslang/oreslang-demo-restful-server/actions/runs/43042127228), job 130596401430, also passed with seven executed steps. Neither test starts the real HTTP guest.

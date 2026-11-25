@@ -5,13 +5,17 @@ base="${BASE_URL:-http://127.0.0.1:3000}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 count=0
+curl_direct=()
+if [[ "${REST_BENCHMARK_DIRECT:-0}" == 1 ]]; then
+  curl_direct=(-q --noproxy "*" --proto "=http")
+fi
 request() {
   local expected="$1" method="$2" path="$3" expected_body="$4"
   shift 4
   local status attempt result seconds mode request_id
   # 503 means admission was rejected before any handler ran; retry only that case.
   for attempt in {1..20}; do
-    result="$(curl --silent --show-error --max-time 10 --request "$method" \
+    result="$(curl "${curl_direct[@]}" --silent --show-error --max-time 10 --request "$method" \
       --dump-header "$tmp/headers" --output "$tmp/body" --write-out '%{http_code} %{time_total}' \
       "$base$path" "$@")"
     read -r status seconds <<< "$result"
