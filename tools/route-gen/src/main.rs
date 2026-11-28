@@ -127,8 +127,9 @@ fn render(project: &Path, routes: &[Route], port: u16, data_dir: &Path) -> Resul
             route.method, route.method, url));
     }
     lines.extend(["    return;", "  }", "end", ""].iter().map(|s| (*s).to_owned()));
-    let config = format!("define module config as\n  pub fnc port(): int {{ return {port}; }}\n  pub fnc data_path(): String {{ return {}; }}\nend\n",
-        json_quote(&data_dir.join("baz.txt").to_string_lossy()));
+    let config = format!("define module config as\n  pub fnc port(): int {{ return {port}; }}\n  pub fnc data_path(): String {{ return {}; }}\n  pub fnc quota_staging_path(): String {{ return {}; }}\nend\n",
+        json_quote(&data_dir.join("baz.txt").to_string_lossy()),
+        json_quote(&data_dir.join(".baz.quota-stage.txt").to_string_lossy()));
     Ok((lines.join("\n"), config))
 }
 #[cfg(any(test, not(target_os = "linux")))]
@@ -261,6 +262,9 @@ mod tests {
         assert!(routes.contains("route_0 from \"../routes/rest/foo/bar_b-2/post\""));
         assert!(routes.contains("POST /foo/bar_b-2"));
         assert!(routes.contains("route_1 from \"../routes/rest/health/get\""));
+        let config = fs::read_to_string(t.generated("config.ores")).unwrap();
+        assert!(config.contains("pub fnc quota_staging_path(): String"));
+        assert!(config.contains(".baz.quota-stage.txt"));
         t.run().unwrap();
         assert_eq!(fs::read_to_string(t.generated("routes.ores")).unwrap(), routes);
     }

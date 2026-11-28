@@ -6,7 +6,7 @@ import module telemetry from "./lib/telemetry";
 
 pub async routine main(): void {
   val builder = spin.builder();
-  routes.register(rt borrow mut builder);
+  routes.register(rt mut borrow builder);
   val app = builder.build().unwrap();
   // A single admitted exchange lasts through actor finalization. This protects
   // the demo's read/modify/write file operations within this server process.
@@ -21,7 +21,7 @@ pub async routine main(): void {
     app.dispatch(request);
     routing_span.finish("ok", 0);
     val int status = await completion;
-    telemetry.completed(rt borrow mut span, status);
+    telemetry.completed(rt mut borrow span, status);
   }
   return;
 }

@@ -126,8 +126,7 @@ Admission is **one active request**, held until its actor finishes. This seriali
 file operations within a single server process; excess concurrent requests get
 503. The curl script retries only admission rejection. Use one server process per
 data directory. This is deliberately a small persistence demo: file writes are
-not crash-atomic database transactions, appended resources have no total-size
-quota, and there is no authentication or production concurrency claim.
+not multi-operation database transactions. The quota candidate adds a 1 MiB persisted UTF-8 ceiling and descriptor-bounded reads. There is no authentication or production concurrency claim.
 
 The server binds loopback, allows network access only to its configured local
 port, and scopes file read/write permission to the data directory. Request paths
@@ -420,3 +419,9 @@ Run the dependency-free publisher tests with `cargo test --offline --locked --ma
 ## Rust REST benchmark
 
 Run `BASE_URL=http://127.0.0.1:3000 bash scripts/benchmark.sh --runs 6` only against a disposable local server/data directory: this benchmark writes and deletes the demo resource. Numeric loopback only, direct HTTP without proxy or curl configuration. Host timing tests do not certify guest AOT or runtime parity.
+
+## Persisted quota candidate (not released)
+
+This branch forward-ports the quota stack to the current REST source, preserving the newer Spin/OTel gitlinks, transport acceptance and Rust route publisher. The candidate compiler pin a3498d226b521258517f41375b985abbbdd60868 supplies bounded-read/file-size/atomic-write primitives missing from the prior tested legacy compiler. Compatibility with the updated dependency graph has not been proven. Do not interpret host tests as successful guest compilation.
+
+The 1 MiB authoritative resource ceiling is separate from the 64 KiB ingress body limit. Temporary PATCH staging may be up to the sum of those bounds. Staging cleanup assumes a trusted single-server directory. Before main, run the complete HTTP suite including quota/ingress/transport cases and both relocated native delivery modes; a failed compiler or missing guest receipt is a blocker.

@@ -6,6 +6,9 @@ define isoactor Handler as
     val request = http.claim(mail.value);
     val span = telemetry.actor_started(rt borrow request, "isolated");
     let int telemetry_status = 0;
+    // Only this handler may clean a staging file it successfully created.
+    // A pre-existing untrusted symlink must be preserved for inspection.
+    let bool stage_owned = false;
     try {
       request.set_header("X-Route-File", "src/routes/rest/foo/bar/baz/put.ores");
       if request.header("Content-Type") != "text/plain"; then
@@ -21,9 +24,29 @@ define isoactor Handler as
         self.end();
         return;
       fi
-      val Future<bool> checking = store.exists();
-      val bool exists = await checking;
-      val Future<void> writing = store.write(body); await writing;
+
+      val Future<void> pending_stage_for_size_1 = store.stage_for_size(body);
+
+      await pending_stage_for_size_1;
+      stage_owned = true;
+      val Future<int> pending_staged_size_2 = store.staged_size();
+      val int body_bytes = await pending_staged_size_2;
+      val Future<void> pending_clear_stage_3 = store.clear_stage();
+      await pending_clear_stage_3;
+      stage_owned = false;
+      val int quota_limit_1 = store.max_resource_bytes();
+      if body_bytes > quota_limit_1; then
+        await request.respond(413, "text/plain", "resource exceeds persisted byte quota");
+        telemetry_status = 413;
+        self.end();
+        return;
+      fi
+
+      val Future<bool> pending_exists_4 = store.exists();
+
+      val bool exists = await pending_exists_4;
+      val Future<void> pending_write_5 = store.write(body);
+      await pending_write_5;
       if !exists; then request.set_header("Location", "/foo/bar/baz"); fi
       await request.respond(exists ? 200 : 201, "text/plain; charset=utf-8", body);
       telemetry_status = exists ? 200 : 201;
@@ -31,6 +54,18 @@ define isoactor Handler as
       return;
     } catch (failure) {
       span.event("ERROR", "handler failed");
+      // A failed size/stat/unlink can leave quota staging after successful
+      // installation. Best-effort async cleanup must not mask the original
+      // failure or attempt to unlink an unowned pre-existing symlink.
+      if stage_owned; then
+        try {
+          val Future<void> pending_clear_stage_6 = store.clear_stage();
+          await pending_clear_stage_6;
+          stage_owned = false;
+        } catch (cleanup_failure) {
+          span.event("ERROR", "quota staging cleanup failed");
+        }
+      fi
       if request.can_respond; then
         await request.respond(500, "text/plain", "Internal Server Error");
         telemetry_status = 500;
